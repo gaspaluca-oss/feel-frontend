@@ -136,3 +136,20 @@ di toolchain di rompere silenziosamente il supporto a Windows 7. Vedi
 ## Licenza
 
 Ereditata da FEEL: GNU LGPL v3 o successiva. Vedi [`__license.txt`](__license.txt).
+FEEL 1.x è di Maurizio Montel e dei contributori del progetto originale.
+
+---
+
+## Dove sta FEEL 1.x
+
+Il codice C# / XNA non è in questo ramo. È conservato nel tag
+[`feel-1.x-final`](../../tree/feel-1.x-final), che contiene i 196 file originali:
+è il riferimento per capire come il vecchio frontend faceva una cosa, e la sorgente
+per chi vuole continuare a usarlo così com'è.
+
+```bash
+git worktree add ../feel-1.x feel-1.x-final
+```
+
+Tenerlo fuori dal ramo di lavoro non è pignoleria: con dentro due progetti, ogni
+`cargo build` e ogni ricerca nel codice si portavano dietro file che non c'entravano.

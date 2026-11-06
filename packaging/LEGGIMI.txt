@@ -1,0 +1,59 @@
+FEEL 2.0 - anteprima 0.1.0 (solo riga di comando)
+=================================================
+
+Cosa e' questo
+---------------
+Il motore di FEEL 2.0: importa la configurazione di FEEL 1.x, la salva in un
+database, converte i layout e avvia gli emulatori.
+
+NON e' ancora il frontend grafico: la finestra con la lista dei giochi, i video
+e le skin deve ancora essere scritta. Questa anteprima serve a verificare che
+il motore funzioni, sui dati veri.
+
+Requisiti
+---------
+Windows 7 SP1 o successivo, 32 o 64 bit. Nessuna installazione: e' un solo
+file eseguibile, senza DLL da copiare accanto.
+
+Prova rapida
+------------
+Fai doppio clic su  AVVIA-DEMO.bat
+
+Importa la libreria di esempio, elenca i giochi, mostra il comando di avvio e
+avvia un emulatore simulato. Serve a vedere il ciclo completo senza avere MAME
+installato.
+
+Uso con la tua installazione FEEL 1.x
+-------------------------------------
+Apri un prompt nella cartella di questo file e scrivi:
+
+  feel import "C:\Program Files\Feel" --db feel.sqlite
+  feel info   feel.sqlite
+  feel list   feel.sqlite mame-0
+  feel launch feel.sqlite mame-0 pacman --dry-run
+  feel launch feel.sqlite mame-0 pacman
+  feel layout "C:\Program Files\Feel" --out layout-convertiti
+
+Se hai spostato le rom:
+
+  feel import "C:\Program Files\Feel" --db feel.sqlite --remap "C:\Program Files\mame=D:\MAME"
+
+Comandi
+-------
+  import   legge una installazione FEEL 1.x e scrive la libreria in un database
+  info     mostra cosa contiene un database
+  list     elenca i giochi di una lista
+  launch   avvia un gioco e registra il tempo di gioco
+  layout   converte i layout dal formato di FEEL 1.x a quello di FEEL 2.0
+
+  --dry-run  mostra cosa farebbe, senza scrivere o avviare niente
+
+Consiglio: usa sempre --dry-run la prima volta. Mostra l'eseguibile, il
+percorso della rom, la riga di comando e le applicazioni di pre/post avvio
+esattamente come verrebbero eseguiti. E' il modo piu' veloce per capire perche'
+un gioco non parte.
+
+Licenza
+-------
+GNU LGPL v3 o successiva. Vedi LICENZA.txt.
+FEEL 1.x e' di Maurizio Montel e dei contributori del progetto originale.
