@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "crates/feel-core",
     "crates/feel-config",
+    "crates/feel-db",
+    "crates/feel-cli",
 ]
 
 [workspace.package]

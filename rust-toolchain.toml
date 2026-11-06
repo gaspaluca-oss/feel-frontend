@@ -1,16 +1,25 @@
-# Toolchain fissata: la 1.77.2 e' l'ultima la cui std e' caricabile su Windows 7.
+# Fissa la VERSIONE, non l'host: un file con un host Windows non si installa su Linux.
+# Le differenze fra i due sistemi stanno in docs/ARCHITETTURA.md, decisione D8.
 #
-# Da 1.78 in poi la std importa bcryptprimitives.dll (Windows 8+) e
-# api-ms-win-core-synch-l1-2-0.dll: su Windows 7 il loader si ferma subito.
-# Non e' configurabile, va riverificato a ogni cambio di versione con tools/pecheck.py.
-# Vedi docs/ARCHITETTURA.md, decisione D3.
+# Perche' la 1.77.2
+# -----------------
+# E' l'ultima la cui std e' caricabile su Windows 7. Da 1.78 in poi importa
+# bcryptprimitives.dll e api-ms-win-core-synch-l1-2-0.dll, che su Windows 7 non
+# esistono: il sistema si ferma in avvio con un errore che non spiega nulla.
+# Su Linux non servirebbe, ma tenere un solo MSRV evita che i due rami divergano
+# senza che nessuno se ne accorga. Va riverificato a ogni cambio di versione con
+# tools/pecheck.py.
 #
-# L'host e' i686-pc-windows-gnu, non x86_64: i build script e le proc-macro si
-# compilano per l'host, quindi con l'host MSVC servirebbe link.exe di Visual Studio.
-# Tenendo tutto a 32 bit serve solo MinGW i686, e in piu' l'ambiente di build
-# corrisponde esattamente all'ambiente di esecuzione.
-#
-# Da installare una volta sola (rustup rifiuta gli host non nativi senza il flag):
+# Come si compila
+# ---------------
+# Windows, per ottenere un binario che parta anche su Windows 7:
 #   rustup toolchain install 1.77.2-i686-pc-windows-gnu --profile minimal --force-non-host
+#   cargo +1.77.2-i686-pc-windows-gnu build --release
+#
+# Linux:
+#   cargo build --release
+#
+# L'host a 32 bit su Windows serve perche' i build script e le proc-macro si
+# compilano per l'host: con l'host MSVC servirebbe link.exe di Visual Studio.
 [toolchain]
-channel = "1.77.2-i686-pc-windows-gnu"
+channel = "1.77.2"

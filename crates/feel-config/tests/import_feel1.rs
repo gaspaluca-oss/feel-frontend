@@ -127,7 +127,13 @@ fn importa_le_statistiche_di_gioco() {
     let lib = &import.library;
 
     let pacman = GameKey::new("pacman");
-    let stats = lib.stats(&EmulatorKey::new("mame"), &pacman).unwrap();
+    let stats = lib
+        .stats(
+            &PlatformKey::new("arcade"),
+            &EmulatorKey::new("mame"),
+            &pacman,
+        )
+        .unwrap();
 
     assert_eq!(stats.count, 42);
     // 5 giorni, 3 ore, 12 minuti e 7 secondi.

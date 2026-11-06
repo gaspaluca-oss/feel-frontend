@@ -40,12 +40,12 @@ migliorate, per Windows 7 SP1 → Windows 11.
 
 | | |
 |---|---|
-| Sistema | Windows 7 SP1 → Windows 11 |
-| Architettura | x86 (32 bit) primaria, x64 secondaria |
-| GPU | Direct3D 9 con pixel shader 2.0 |
+| Sistema | Windows 7 SP1 → Windows 11, oppure Linux |
+| Architettura | x86 (32 bit) primaria su Windows, nativa su Linux |
+| GPU | OpenGL 3.3 |
 
-Il target GNU usa `msvcrt.dll`, quindi su Windows 7 non serve installare la
-Universal CRT (KB2999226).
+Su Windows il target GNU usa `msvcrt.dll`, quindi su Windows 7 non serve installare
+la Universal CRT (KB2999226).
 
 ---
 
@@ -57,36 +57,68 @@ Universal CRT (KB2999226).
 
 ---
 
+## Uso
+
+La prima cosa che sa fare è importare una installazione FEEL 1.x esistente — rom,
+liste, statistiche e mappatura dei tasti — in un database.
+
+```bash
+# guarda cosa verrebbe importato, senza scrivere niente
+feel import "C:\Program Files\Feel" --dry-run
+
+# importa davvero
+feel import "C:\Program Files\Feel" --db feel.sqlite
+
+# cosa c'è dentro
+feel info feel.sqlite
+feel list feel.sqlite mame-0
+```
+
+Se hai spostato le rom: `--remap "C:\Program Files\mame=D:\MAME"`, ripetibile.
+
+`import` stampa **quello che non è riuscito a interpretare** invece di inventarlo.
+Un avviso come "`emulator_commandline` vuoto, non so cosa avviare" è l'unico modo per
+accorgersi di un problema prima di trovarlo sul cabinato.
+
+---
+
 ## Compilare
 
-Servono due cose: un linker **MinGW-w64 a 32 bit** (Rust non ne include uno) e la
-toolchain Rust, che `rust-toolchain.toml` fissa già.
+### Linux
+
+Niente da preparare oltre a Rust: l'host è quello nativo.
+
+```bash
+cargo test
+cargo build --release
+```
+
+### Windows
+
+Serve un linker **MinGW-w64 a 32 bit**, perché Rust non ne include uno.
 
 ```powershell
 winget install --id MSYS2.MSYS2
 C:\msys64\usr\bin\bash -lc "pacman -S --noconfirm mingw-w64-i686-gcc"
 
 # rustup rifiuta gli host non nativi senza --force-non-host: e' voluto, l'host
-# e' a 32 bit per restare coerente con il target.
+# a 32 bit serve perche' i build script si compilano per l'host.
 rustup toolchain install 1.77.2-i686-pc-windows-gnu --profile minimal --force-non-host
 ```
 
-Poi `C:\msys64\mingw32\bin` deve stare nel `PATH`. A quel punto:
+Poi `C:\msys64\mingw32\bin` deve stare nel `PATH`, e si compila indicando la toolchain:
 
 ```bash
-cargo test            # build script, proc-macro, link ed esecuzione
-cargo build --release
+cargo +1.77.2-i686-pc-windows-gnu test
+cargo +1.77.2-i686-pc-windows-gnu build --release
 
 # controlla che il binario sia davvero caricabile su Windows 7
 python tools/pecheck.py target/release/feel.exe
 ```
 
-Non c'è nessun `--target` da passare: host e target sono entrambi
-`i686-pc-windows-gnu`.
-
 `pecheck.py` non è un extra: è la rete di sicurezza che impedisce a un aggiornamento
 di toolchain di rompere silenziosamente il supporto a Windows 7. Vedi
-[`docs/ARCHITETTURA.md`](docs/ARCHITETTURA.md), decisione D3.
+[`docs/ARCHITETTURA.md`](docs/ARCHITETTURA.md), decisione D3 e D8.
 
 ---
 

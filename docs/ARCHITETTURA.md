@@ -10,7 +10,7 @@ decisione qui dentro è stata presa perché una delle alternative non reggeva un
 
 | Vincolo | Valore |
 |---|---|
-| Sistemi operativi | **Windows 7 SP1 → Windows 11** |
+| Sistemi operativi | **Windows 7 SP1 → Windows 11** e **Linux** |
 | Architettura | **x86 (32-bit) primaria**, x64 secondaria |
 | Schermi | CRT 15/31 kHz e LCD, orizzontali e verticali |
 | Hardware | PC da cabinato, anche molto datati |
@@ -22,6 +22,10 @@ decisione qui dentro è stata presa perché una delle alternative non reggeva un
 eliminerebbe Rust e ogni libreria moderna, e — soprattutto — non farebbe girare gli
 emulatori attuali (MAME richiede Windows 10). Il cabinato XP resta su FEEL 1.x, che già
 funziona. Il tag `feel-1.x-final` è lì per questo.
+
+**Windows e Linux contano allo stesso modo.** Non è un porting: è un solo programma che
+gira su due sistemi. La conseguenza pratica è che nessuna scelta tecnica può appoggiarsi
+solo a Windows — vedi D2, D5 e D6, che sono state riscritte proprio per questo.
 
 ---
 
@@ -37,23 +41,31 @@ fino alla 1.77.
 C#/.NET Framework 4.0 (è la tecnologia di FEEL 1.x: riscrivere con lo stesso stack non
 migliora nulla).
 
-### D2 — Renderer: Direct3D 9Ex, shader precompilati
+### D2 — Renderer: OpenGL 3.3 core, condiviso fra Windows e Linux
 
-D3D9 è l'unica API grafica che gira su **tutta** la fascia Windows 7 → 11 senza
-prerequisiti, ed è anche quella che funziona meglio sulle GPU vecchie dei cabinati.
-Supporta pixel shader 2.0/3.0, che bastano per tutto l'effetto "moderno":
+Era Direct3D 9Ex finché il target era solo Windows. Con Linux nel target D3D9 non
+serve più, e l'unica API grafica che copre **tutta** la fascia Windows 7 → 11 *e*
+Linux è OpenGL:
 
-- scanline e maschera RGB
-- curvatura dello schermo
-- bloom e aberrazione cromatica
-- scaling bicubico
+| | Windows 7 → 11 | Linux |
+|---|---|---|
+| OpenGL 3.3 | driver GPU dal 2010 in poi | Mesa, sempre |
+| Direct3D 9 | sì | no |
+| Direct3D 12 | solo da Windows 10 | no |
+| Vulkan | no | sì |
 
-Gli shader sono **compilati in fase di build** (`fxc` → `.cso`) e spediti come bytecode.
-Così a runtime non serve `d3dcompiler_47.dll`, che su Windows 7 non è garantito.
+**Un renderer solo, non due.** Un backend per sistema operativo raddoppierebbe il
+codice che disegna e la superficie da testare, e il rendering è la parte che costa più
+di tutte scrivere e verificare. GLSL 3.30 copre tutto quello che serve: scanline,
+maschera RGB, curvatura, bloom, aberrazione cromatica, scaling bicubico.
 
-*Alternative scartate:* D3D11 (richiede il Platform Update su Windows 7), wgpu (backend
-DX12 richiede Windows 10, il backend DX11 è stato rimosso), OpenGL (driver troppo
-variabili sulle macchine vecchie), Godot (4 richiede Windows 10, 3.x è fermo).
+Su Linux c'è un vantaggio che su Windows non esiste: Mesa accetta modeline arbitrarie,
+quindi il cambio di risoluzione per gioco su un CRT a 15 kHz funziona senza driver
+modificati. È lo stesso motivo per cui GroovyMAME gira su Linux e non su Windows.
+
+*Alternative scartate:* wgpu (il backend DX12 richiede Windows 10, Vulkan non esiste su
+Windows 7, il backend DX11 è stato rimosso); due backend separati; Godot (4 richiede
+Windows 10, 3.x è fermo).
 
 ### D3 — Toolchain: Rust 1.77.2, target `i686-pc-windows-gnu`
 
@@ -90,6 +102,9 @@ e l'ambiente di build coincide con l'ambiente di esecuzione.
 Verificato end-to-end: build script eseguiti, proc-macro caricate (`serde_derive`),
 link con MinGW, test eseguito e superato.
 
+Vale per Windows. Su Linux l'host è quello nativo e non serve nulla di tutto questo:
+vedi D8.
+
 ### D4 — Dati: SQLite embedded
 
 Al posto dei file di testo `data/*.lst` e `data/*.sts` di FEEL 1.x. Un solo database
@@ -99,20 +114,57 @@ installare sul cabinato.
 
 Il formato di FEEL 1.x è documentato e viene **importato**, non abbandonato: vedi §6.
 
-### D5 — Video: Media Foundation
+### D5 — Video: FFmpeg
 
-Media Foundation è presente su Windows 7 SP1 e decodifica mp4/h264 senza dipendenze
-esterne. È lo stesso ruolo che in FEEL 1.x aveva MCI, ma con un'API che non si blocca.
+Media Foundation è solo Windows, quindi con Linux nel target non regge più. FFmpeg
+decodifica mp4/h264 e i formati legacy su entrambi i sistemi con una sola strada di
+codice.
 
-*Alternativa:* FFmpeg compilato staticamente, da valutare solo se qualche formato
-legacy non è coperto.
+Costo dichiarato: è una dipendenza C. Va compilata staticamente per non dover
+distribuire DLL accanto al frontend, e va aggiornata a mano perché non la gestisce cargo.
 
-### D6 — Input: Raw Input + XInput
+### D6 — Finestra, input e audio: winit + gilrs + cpal
 
-- **Raw Input** (`WM_INPUT`) per encoder tastiera, spinner e trackball: è il modo
-  corretto di leggere un encoder HID, immune alle politiche di focus di Windows.
-- **XInput** per i gamepad moderni; DirectInput per quelli legacy.
-- La mappatura dei controlli si configura **dentro al frontend**, con verifica dal vivo.
+- **winit** per la finestra e la tastiera: un'API sola per Windows e Linux.
+- **gilrs** per i gamepad: astrae XInput su Windows ed evdev su Linux.
+- **cpal** per l'audio: WASAPI su Windows, ALSA o PulseAudio su Linux.
+- Encoder arcade, spinner e trackball sono dispositivi HID tastiera o mouse: li legge
+  la finestra. La mappatura dei controlli si configura **dentro al frontend**, con
+  verifica dal vivo.
+
+Sono librerie pure Rust, quindi non c'è nessuna DLL da spedire insieme al frontend:
+è il motivo per cui sono state preferite a SDL2.
+
+### D7 — Cosa resta specifico di un sistema operativo
+
+Poco, e va isolato dietro un'interfaccia unica. Questi sono i punti in cui Windows e
+Linux divergono davvero:
+
+| | Windows | Linux |
+|---|---|---|
+| Cambio risoluzione | API di sistema | `xrandr` con modeline |
+| LED dei pulsanti | LED-Wiz, PacDrive via DLL | LEDSpicer, seriale |
+| Avvio emulatore | `CreateProcess` | `fork`/`exec` |
+
+`feel-core`, `feel-config` e `feel-db` **non compaiono** in questa tabella: non toccano
+il sistema operativo. È la ragione per cui questo cambio di rotta costa poco — l'unica
+parte da rifare è quella che disegna, e non era ancora stata scritta.
+
+### D8 — La toolchain cambia per sistema operativo
+
+`rust-toolchain.toml` fissa **solo la versione**, non l'host: un file con un host
+Windows non si puo' nemmeno installare su Linux. Le differenze stanno qui:
+
+| | Windows (per Windows 7) | Linux |
+|---|---|---|
+| Host | `i686-pc-windows-gnu` | nativo (`x86_64-unknown-linux-gnu`) |
+| Target | `i686-pc-windows-gnu` | nativo, o `i686` per cabinati a 32 bit |
+| Comando | `cargo +1.77.2-i686-pc-windows-gnu build` | `cargo build` |
+| Linker | MinGW i686 (MSYS2) | quello di sistema |
+
+La versione 1.77.2 resta per tutti e due: **su Linux non sarebbe necessaria**, ma
+un solo MSRV in tutto il repository evita che Windows e Linux divergono senza che
+nessuno se ne accorga.
 
 ---
 
@@ -120,14 +172,16 @@ legacy non è coperto.
 
 ```
 crates/
-  feel-core/      modello dati, libreria, filtri, statistiche (nessuna dipendenza da Windows)
-  feel-config/    configurazione, schema, importatore FEEL 1.x
-  feel-db/        SQLite: schema, migrazioni, query
-  feel-media/     Media Foundation: decodifica video snap, immagini, audio
-  feel-render/    Direct3D 9Ex: swap chain, shader, schermate, testo
-  feel-input/     Raw Input, XInput, mappatura tasti
-  feel-launch/    avvio emulatori, attesa, ritorno al frontend, cambio risoluzione
+  feel-core/      modello dati, libreria, filtri, statistiche          portabile
+  feel-config/    configurazione, schema, importatore FEEL 1.x          portabile
+  feel-db/        SQLite: schema, migrazioni, query                     portabile
+  feel-media/     FFmpeg: video snap, immagini, audio
+  feel-render/    OpenGL 3.3: finestra, shader, schermate, testo
+  feel-input/     winit + gilrs: tastiera, gamepad, mappatura tasti
+  feel-launch/    avvio emulatori, attesa, ritorno al frontend
+  feel-platform/  le differenze fra sistemi: risoluzione, LED
   feel-scrape/    scraper (ScreenScraper), coda e ripresa
+  feel-cli/       binario: importazione e diagnostica da riga di comando
   feel-ui/        schermate del frontend e dell'editor di layout
   feel-app/       binario: ciclo principale, orchestrazione
 mockup/           prototipo visivo (HTML, apribile nel browser)

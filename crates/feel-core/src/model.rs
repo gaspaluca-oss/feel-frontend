@@ -13,6 +13,9 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+/// Coppia che identifica un emulatore in tutta la libreria.
+pub type EmulatorRef = (PlatformKey, EmulatorKey);
+
 macro_rules! key_type {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*
@@ -72,6 +75,11 @@ key_type!(
     LayoutKey
 );
 
+/// Identifica un emulatore in modo univoco: la sua chiave **e** la piattaforma.
+///
+/// Serve perche' `mame` puo' esistere sia sotto `arcade` sia sotto `computer`,
+/// e sono due emulatori diversi con liste diverse.
+
 /// Orientamento richiesto dal gioco.
 ///
 /// Serve a decidere quale variante del layout usare su un cabinato verticale.
@@ -115,6 +123,46 @@ impl std::fmt::Display for Timestamp {
             "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
             self.year, self.month, self.day, self.hour, self.minute, self.second
         )
+    }
+}
+
+impl Timestamp {
+    /// Legge il formato con cui questo tipo viene scritto: `AAAA-MM-GG hh:mm:ss`.
+    ///
+    /// È il formato che finisce nel database, quindi serve sia a scrivere sia a
+    /// rileggere senza perdere l'istante.
+    pub fn parse_iso(value: &str) -> Option<Self> {
+        let (date, time) = value.trim().split_once(' ')?;
+
+        let mut date_parts = date.split('-');
+        let year = date_parts.next()?.parse::<i32>().ok()?;
+        let month = date_parts.next()?.parse::<u8>().ok()?;
+        let day = date_parts.next()?.parse::<u8>().ok()?;
+        if date_parts.next().is_some() {
+            return None;
+        }
+
+        let mut time_parts = time.split(':');
+        let hour = time_parts.next()?.parse::<u8>().ok()?;
+        let minute = time_parts.next()?.parse::<u8>().ok()?;
+        let second = time_parts
+            .next()
+            .and_then(|part| part.parse::<u8>().ok())
+            .unwrap_or(0);
+        if time_parts.next().is_some() {
+            return None;
+        }
+
+        if !(1..=12).contains(&month)
+            || !(1..=31).contains(&day)
+            || hour > 23
+            || minute > 59
+            || second > 60
+        {
+            return None;
+        }
+
+        Some(Timestamp { year, month, day, hour, minute, second })
     }
 }
 
@@ -232,11 +280,11 @@ pub struct Library {
     pub games: Vec<Game>,
     /// Statistiche, raggruppate per emulatore e poi per nome della rom.
     ///
-    /// Due livelli e non uno: FEEL 1.x salva le statistiche in `data/<emu>.sts`,
-    /// quindi lo stesso nome rom in due emulatori sono due giochi distinti.
-    /// Appiattirli perderebbe le partite di uno dei due.
+    /// La chiave e' la coppia piattaforma/emulatore, non il solo emulatore:
+    /// FEEL 1.x scrive un unico `data/<emu>.sts` per nome di emulatore, quindi
+    /// due piattaforme con un emulatore omonimo si scambierebbero le partite.
     #[serde(default)]
-    pub plays: HashMap<EmulatorKey, HashMap<GameKey, PlayStats>>,
+    pub plays: HashMap<EmulatorRef, HashMap<GameKey, PlayStats>>,
 }
 
 impl Library {
@@ -264,14 +312,21 @@ impl Library {
         self.games.iter().filter(move |g| g.gamelist == gamelist)
     }
 
-    pub fn stats(&self, emulator: &EmulatorKey, game: &GameKey) -> Option<&PlayStats> {
-        self.plays.get(emulator).and_then(|by_game| by_game.get(game))
+    pub fn stats(
+        &self,
+        platform: &PlatformKey,
+        emulator: &EmulatorKey,
+        game: &GameKey,
+    ) -> Option<&PlayStats> {
+        self.plays
+            .get(&(platform.clone(), emulator.clone()))
+            .and_then(|by_game| by_game.get(game))
     }
 
-    /// Le statistiche di un gioco, risalendo all'emulatore dalla sua lista.
+    /// Le statistiche di un gioco, risalendo a piattaforma ed emulatore dalla sua lista.
     pub fn stats_of(&self, game: &Game) -> Option<&PlayStats> {
         let gamelist = self.gamelist(&game.gamelist)?;
-        self.stats(&gamelist.emulator, &game.key)
+        self.stats(&gamelist.platform, &gamelist.emulator, &game.key)
     }
 
     /// I giochi, in ordine alfabetico per titolo.
@@ -326,6 +381,25 @@ mod tests {
             second: 0,
         };
         assert_eq!(t.to_string(), "2018-03-12 21:14:00");
+    }
+
+    #[test]
+    fn rilegge_il_timestamp_che_scrive() {
+        let originale = Timestamp {
+            year: 2018,
+            month: 3,
+            day: 12,
+            hour: 21,
+            minute: 14,
+            second: 7,
+        };
+        assert_eq!(Timestamp::parse_iso(&originale.to_string()), Some(originale));
+
+        // Valori fuori intervallo non producono un istante inventato.
+        assert_eq!(Timestamp::parse_iso("2018-13-01 00:00:00"), None);
+        assert_eq!(Timestamp::parse_iso("2018-03-12 25:00:00"), None);
+        assert_eq!(Timestamp::parse_iso("non una data"), None);
+        assert_eq!(Timestamp::parse_iso("2018-03-12"), None);
     }
 
     fn libreria_di_prova() -> Library {

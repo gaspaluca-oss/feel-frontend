@@ -10,6 +10,12 @@
 /tmp/
 *.local.toml
 
+# Database: si rigenerano importando, non si committano
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
 # Sistema
 Thumbs.db
 desktop.ini

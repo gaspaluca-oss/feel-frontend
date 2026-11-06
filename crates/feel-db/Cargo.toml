@@ -1,0 +1,18 @@
+[package]
+name = "feel-db"
+description = "Persistenza su SQLite della libreria di FEEL 2.0."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+feel-core = { path = "../feel-core" }
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde_json = "1"
+thiserror.workspace = true
+
+[dev-dependencies]
+feel-core = { path = "../feel-core" }
+feel-config = { path = "../feel-config" }

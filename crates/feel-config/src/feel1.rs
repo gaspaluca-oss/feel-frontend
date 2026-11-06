@@ -334,7 +334,7 @@ impl Importer<'_> {
             self.import_gamelist(&dir, platform, key, gamelist_key, order as u32);
         }
 
-        self.import_stats(key);
+        self.import_stats(platform, key);
     }
 
     // -- liste ------------------------------------------------------------------
@@ -420,7 +420,7 @@ impl Importer<'_> {
 
     // -- statistiche ------------------------------------------------------------
 
-    fn import_stats(&mut self, emulator: &EmulatorKey) {
+    fn import_stats(&mut self, platform: &PlatformKey, emulator: &EmulatorKey) {
         let Some(data_dir) = self.data_dir.clone() else {
             return;
         };
@@ -439,7 +439,9 @@ impl Importer<'_> {
 
         let stats = parse_stats(&text);
         if !stats.is_empty() {
-            self.library.plays.insert(emulator.clone(), stats);
+            self.library
+                .plays
+                .insert((platform.clone(), emulator.clone()), stats);
         }
     }
 
@@ -452,6 +454,23 @@ impl Importer<'_> {
             for emulator in &mut self.library.emulators {
                 emulator.recursive_roms = true;
             }
+        }
+
+        // FEEL 1.x nomina le statistiche `data/<emu>.sts`, senza la piattaforma:
+        // due piattaforme con un emulatore omonimo condividevano lo stesso file.
+        // Qui non succede, ma l'utente deve saperlo.
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        let mut duplicated: BTreeSet<String> = BTreeSet::new();
+        for emulator in &self.library.emulators {
+            if !seen.insert(emulator.key.as_str()) {
+                duplicated.insert(emulator.key.to_string());
+            }
+        }
+        for name in duplicated {
+            self.report.warn(format!(
+                "emulatore '{name}' compare in piu' di una piattaforma: in FEEL 1.x le loro \
+                 statistiche erano lo stesso file, qui restano separate"
+            ));
         }
 
         let total: usize = self.library.games.len();

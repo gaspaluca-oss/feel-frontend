@@ -1,0 +1,17 @@
+[package]
+name = "feel-cli"
+description = "Riga di comando di FEEL 2.0: importazione e diagnostica."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "feel"
+path = "src/main.rs"
+
+[dependencies]
+feel-core = { path = "../feel-core" }
+feel-config = { path = "../feel-config" }
+feel-db = { path = "../feel-db" }

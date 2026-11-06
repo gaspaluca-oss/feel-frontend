@@ -12,7 +12,7 @@ pub mod model;
 pub mod text;
 
 pub use model::{
-    ArtworkPaths, Emulator, EmulatorKey, Game, GameKey, Gamelist, GamelistKey, LayoutKey, Library,
-    Platform, PlatformKey, PlayStats, Rotation, Timestamp,
+    ArtworkPaths, Emulator, EmulatorKey, EmulatorRef, Game, GameKey, Gamelist, GamelistKey,
+    LayoutKey, Library, Platform, PlatformKey, PlayStats, Rotation, Timestamp,
 };
 pub use text::cleanup_name;
