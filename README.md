@@ -39,7 +39,8 @@ migliorate, per Windows 7 SP1 → Windows 11.
 | Architettura | x86 (32 bit) primaria, x64 secondaria |
 | GPU | Direct3D 9 con pixel shader 2.0 |
 
-Su Windows 7 serve SP1 con l'Universal CRT (KB2999226), presente su qualsiasi sistema aggiornato.
+Il target GNU usa `msvcrt.dll`, quindi su Windows 7 non serve installare la
+Universal CRT (KB2999226).
 
 ---
 
@@ -47,16 +48,33 @@ Su Windows 7 serve SP1 con l'Universal CRT (KB2999226), presente su qualsiasi si
 
 - [`docs/ARCHITETTURA.md`](docs/ARCHITETTURA.md) — vincoli, decisioni tecniche, struttura, roadmap
 - [`mockup/frontend.html`](mockup/frontend.html) — prototipo visivo, apribile con un browser
+- [`tools/pecheck.py`](tools/pecheck.py) — verifica la compatibilità con Windows 7 di un eseguibile
 
 ---
 
 ## Compilare
 
-Il progetto è agli inizi: la toolchain Rust è fissata in `rust-toolchain.toml`.
+Serve un linker **MinGW-w64 a 32 bit**: Rust non ne include uno. Su questa macchina
+è arrivato con MSYS2.
+
+```powershell
+winget install --id MSYS2.MSYS2
+C:\msys64\usr\bin\bash -lc "pacman -S --noconfirm mingw-w64-i686-gcc"
+```
+
+Poi `C:\msys64\mingw32\bin` deve stare nel `PATH`. La toolchain Rust è già fissata da
+`rust-toolchain.toml`, non c'è niente da scegliere:
 
 ```bash
-cargo build --release
+cargo build --release --target i686-pc-windows-gnu
+
+# controlla che il binario sia davvero caricabile su Windows 7
+python tools/pecheck.py target/i686-pc-windows-gnu/release/feel.exe
 ```
+
+`pecheck.py` non è un extra: è la rete di sicurezza che impedisce a un aggiornamento
+di toolchain di rompere silenziosamente il supporto a Windows 7. Vedi
+[`docs/ARCHITETTURA.md`](docs/ARCHITETTURA.md), decisione D3.
 
 ---
 

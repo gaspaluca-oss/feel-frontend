@@ -1,0 +1,10 @@
+# Toolchain fissata: la 1.77.2 e' l'ultima la cui std e' caricabile su Windows 7.
+#
+# Da 1.78 in poi la std importa bcryptprimitives.dll (Windows 8+) e
+# api-ms-win-core-synch-l1-2-0.dll: su Windows 7 il loader si ferma subito.
+# Non e' configurabile, va verificato a ogni cambio di versione con tools/pecheck.py.
+# Vedi docs/ARCHITETTURA.md, decisione D3.
+[toolchain]
+channel = "1.77.2"
+targets = ["i686-pc-windows-gnu"]
+profile = "minimal"

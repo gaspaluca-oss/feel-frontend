@@ -55,18 +55,31 @@ Così a runtime non serve `d3dcompiler_47.dll`, che su Windows 7 non è garantit
 DX12 richiede Windows 10, il backend DX11 è stato rimosso), OpenGL (driver troppo
 variabili sulle macchine vecchie), Godot (4 richiede Windows 10, 3.x è fermo).
 
-### D3 — Toolchain: Rust pinnata, target `i686-pc-windows-msvc`
+### D3 — Toolchain: Rust 1.77.2, target `i686-pc-windows-gnu`
 
 Il target a 32 bit è la scelta giusta per questa fascia: gira ovunque, consuma meno
-memoria e copre i cabinati con Windows a 32 bit.
+memoria e copre i cabinati con Windows a 32 bit. Il target **GNU** usa `msvcrt.dll`
+invece della Universal CRT, quindi su Windows 7 non serve installare la KB2999226.
 
-`rust-toolchain.toml` fissa la versione. **Da verificare al primo build:** la 1.77.x
-dovrebbe essere l'ultima con std precompilato per Windows 7 (dalla 1.78 il minimo è
-Windows 10). Se non basta, l'alternativa è il target Tier-3 `i686-win7-windows-msvc`
-con `-Z build-std`, che però richiede nightly.
+**La versione di Rust qui è un vincolo, non una preferenza — ed è misurata.**
+Da 1.78 in poi la std importa `bcryptprimitives.dll` e
+`api-ms-win-core-synch-l1-2-0.dll`, che su Windows 7 non esistono: il sistema si
+ferma in avvio con un errore che non spiega nulla.
 
-Su Windows 7 serve Windows 7 **SP1** con l'Universal CRT (KB2999226), presente su
-qualunque sistema aggiornato.
+| DLL importata | Rust 1.99.1 | Rust 1.77.2 |
+|---|---|---|
+| `bcryptprimitives.dll` (Windows 8+) | **sì** | no |
+| `api-ms-win-core-synch-l1-2-0.dll` (Windows 8+) | **sì** | no |
+| `bcrypt.dll` (Windows 7) | no | sì |
+| `msvcrt.dll` | sì | sì |
+
+`rust-toolchain.toml` fissa la 1.77.2 e `tools/pecheck.py` verifica a ogni build che il
+binario non importi DLL posteriori a Windows 7. Il controllo serve perché l'header PE
+**non è affidabile**: MinGW lascia la versione minima dichiarata a 4.0 in entrambi i
+casi, quindi l'unico segnale vero è la tabella degli import.
+
+Il prezzo è una toolchain di aprile 2024. È il costo dichiarato di Windows 7: se il
+floor sale a Windows 10, il pin si rimuove e si torna su stable.
 
 ### D4 — Dati: SQLite embedded
 
