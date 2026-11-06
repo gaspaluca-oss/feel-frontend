@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use feel_config::ImportOptions;
-use feel_core::{GamelistKey, Library, Timestamp};
+use feel_core::{
+    ArtworkSlot, Dimension, Element, ElementKind, GamelistKey, LabelKind, Library, Timestamp,
+};
 use feel_db::Database;
 use feel_launch::LaunchPlan;
 
@@ -29,17 +31,21 @@ Uso:
   feel info   <file.db>
   feel list   <file.db> <lista>
   feel launch <file.db> <lista> <rom> [--dry-run]
+  feel layout <cartella-feel> [--out <cartella>] [--dry-run]
 
 Comandi:
   import   legge una installazione FEEL 1.x e scrive la libreria in un database
   info     mostra cosa contiene un database
   list     elenca i giochi di una lista
   launch   avvia un gioco e registra il tempo di gioco
+  layout   converte i layout dal formato di FEEL 1.x a quello di FEEL 2.0
 
 Opzioni:
   --db <file>         database su cui lavorare (obbligatorio per import)
+  --out <cartella>    dove scrivere i layout convertiti
   --remap A=B         riscrive un percorso durante l'importazione (ripetibile)
-  --dry-run           import: importa senza scrivere; launch: mostra senza avviare
+  --dry-run           import: importa senza scrivere; launch: mostra senza avviare;
+                      layout: mostra la conversione senza scrivere i file
   -h, --help          questo aiuto
 ";
 
@@ -56,6 +62,7 @@ fn main() -> ExitCode {
         "info" => comando_info(&args[1..]),
         "list" => comando_list(&args[1..]),
         "launch" => comando_launch(&args[1..]),
+        "layout" => comando_layout(&args[1..]),
         altro => Err(format!("comando sconosciuto: {altro} (prova --help)").into()),
     };
 
@@ -299,6 +306,168 @@ fn comando_launch(args: &[String]) -> Result<(), Box<dyn Error>> {
     println!("Partita registrata.");
 
     Ok(())
+}
+
+// ----------------------------------------------------------------------------------
+// layout
+// ----------------------------------------------------------------------------------
+
+fn comando_layout(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let root = args.first().ok_or("manca la cartella di FEEL 1.x da convertire")?;
+    let dry_run = args.iter().any(|argomento| argomento == "--dry-run");
+    let out_dir = args
+        .iter()
+        .position(|argomento| argomento == "--out")
+        .and_then(|index| args.get(index + 1))
+        .map(PathBuf::from);
+
+    let layouts = feel_config::layout1::find_layouts(Path::new(root));
+    if layouts.is_empty() {
+        println!("Nessun layout trovato in {root}.");
+        return Ok(());
+    }
+
+    if let Some(dir) = &out_dir {
+        if !dry_run {
+            std::fs::create_dir_all(dir)?;
+        }
+    }
+
+    for (name, percorso) in &layouts {
+        let layout = feel_config::load_layout(percorso)?;
+
+        println!("\n{name}");
+        if let Some(schermo) = layout.design_size {
+            println!("  pensato per   {:.0}x{:.0}", schermo.width, schermo.height);
+        }
+        println!("  elementi      {}", layout.elements.len());
+
+        for elemento in layout.visible_elements() {
+            println!(
+                "    {:<26} {:<30} {}",
+                descrivi_kind(&elemento.kind),
+                descrivi_ancoraggio(elemento),
+                descrivi_area(&layout, elemento),
+            );
+        }
+
+        if let Some(sfondo) = &layout.background {
+            match (&sfondo.image, sfondo.frames.len()) {
+                (Some(immagine), _) => println!("  sfondo        {immagine}"),
+                (None, quanti) => println!("  sfondo        {quanti} fotogrammi animati"),
+            }
+        }
+
+        // Un file citato ma assente e' il modo piu' comune in cui un layout
+        // convertito sembra giusto e poi si vede male.
+        let referenziati = feel_config::layout1::referenced_assets(&layout);
+        let mancanti: Vec<&String> = referenziati
+            .iter()
+            .filter(|nome| !layout.assets.iter().any(|presente| presente == *nome))
+            .collect();
+        if !mancanti.is_empty() {
+            println!("  file mancanti:");
+            for nome in mancanti {
+                println!("    - {nome}");
+            }
+        }
+
+        if let Some(dir) = &out_dir {
+            let destinazione = dir.join(format!("{name}.json"));
+            if dry_run {
+                println!("  --dry-run: non scrivo {}", destinazione.display());
+            } else {
+                std::fs::write(&destinazione, serde_json::to_string_pretty(&layout)?)?;
+                println!("  scritto       {}", destinazione.display());
+            }
+        }
+    }
+
+    println!("\n{} layout.", layouts.len());
+    Ok(())
+}
+
+fn descrivi_kind(kind: &ElementKind) -> String {
+    match kind {
+        ElementKind::List => "lista".to_owned(),
+        ElementKind::Artwork(slot) => format!("immagine ({})", nome_slot(*slot)),
+        ElementKind::Label(label) => format!("testo ({})", nome_label(*label)),
+        ElementKind::Clock => "orologio".to_owned(),
+        ElementKind::MarqueeBoard => "pannello secondario".to_owned(),
+    }
+}
+
+fn nome_slot(slot: ArtworkSlot) -> &'static str {
+    match slot {
+        ArtworkSlot::Snap => "snap",
+        ArtworkSlot::Marquee => "marquee",
+        ArtworkSlot::Cabinet => "cabinet",
+        ArtworkSlot::Bezel => "bezel",
+        ArtworkSlot::Actors => "actors",
+        ArtworkSlot::ControlPanel => "controls",
+        ArtworkSlot::Title => "title",
+        ArtworkSlot::Wheel => "wheel",
+    }
+}
+
+fn nome_label(label: LabelKind) -> &'static str {
+    match label {
+        LabelKind::Platform => "piattaforma",
+        LabelKind::Emulator => "emulatore",
+        LabelKind::Gamelist => "lista",
+        LabelKind::RomName => "nome rom",
+        LabelKind::RomDescription => "titolo",
+        LabelKind::RomManufacturer => "produttore",
+        LabelKind::RomCategory => "categoria",
+        LabelKind::RomControls => "comandi",
+        LabelKind::RomStatus => "stato",
+        LabelKind::RomDisplayType => "tipo schermo",
+        LabelKind::RomCounter => "contatore",
+    }
+}
+
+/// L'ancoraggio in parole: e' la cosa che si vuole controllare guardando
+/// una conversione, perche' dice come si comportera' a un'altra risoluzione.
+fn descrivi_ancoraggio(elemento: &Element) -> String {
+    let point = elemento.placement.point;
+    let (orizzontale, verticale) = match (point.horizontal, point.vertical) {
+        (feel_core::Horizontal::Left, feel_core::Vertical::Top) => ("sinistra", "alto"),
+        (feel_core::Horizontal::Left, feel_core::Vertical::Middle) => ("sinistra", "centro"),
+        (feel_core::Horizontal::Left, feel_core::Vertical::Bottom) => ("sinistra", "basso"),
+        (feel_core::Horizontal::Center, feel_core::Vertical::Top) => ("centro", "alto"),
+        (feel_core::Horizontal::Center, feel_core::Vertical::Middle) => ("centro", "centro"),
+        (feel_core::Horizontal::Center, feel_core::Vertical::Bottom) => ("centro", "basso"),
+        (feel_core::Horizontal::Right, feel_core::Vertical::Top) => ("destra", "alto"),
+        (feel_core::Horizontal::Right, feel_core::Vertical::Middle) => ("destra", "centro"),
+        (feel_core::Horizontal::Right, feel_core::Vertical::Bottom) => ("destra", "basso"),
+    };
+    format!("{orizzontale} {verticale}")
+}
+
+fn descrivi_area(layout: &feel_core::Layout, elemento: &Element) -> String {
+    let percentuale = |d: Dimension| match d {
+        Dimension::Fraction(frazione) => format!("{:.1}%", frazione * 100.0),
+        Dimension::Pixels(pixel) => format!("{pixel:.0}px"),
+    };
+
+    let dimensione = format!(
+        "{} x {}",
+        percentuale(elemento.size.width),
+        percentuale(elemento.size.height)
+    );
+
+    // Il rettangolo originale e' la cosa piu' facile da confrontare con il
+    // vecchio layout, quindi si mostra quando la risoluzione di progetto c'e'.
+    match layout.design_size {
+        Some(schermo) => {
+            let rect = elemento.rect(schermo);
+            format!(
+                "{dimensione}  ->  {:.0},{:.0} su {:.0}x{:.0}",
+                rect.x, rect.y, schermo.width, schermo.height
+            )
+        }
+        None => dimensione,
+    }
 }
 
 // ----------------------------------------------------------------------------------

@@ -16,3 +16,4 @@ feel-core = { path = "../feel-core" }
 feel-config = { path = "../feel-config" }
 feel-db = { path = "../feel-db" }
 feel-launch = { path = "../feel-launch" }
+serde_json = "1"

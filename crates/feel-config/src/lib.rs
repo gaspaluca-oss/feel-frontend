@@ -12,10 +12,12 @@
 
 pub mod feel1;
 pub mod ini;
+pub mod layout1;
 pub mod paths;
 
 pub use feel1::{
     load, load_with, Feel1Import, Feel1Report, Feel1Settings, ImportError, ImportOptions,
 };
 pub use ini::IniMap;
+pub use layout1::{convert as convert_layout, load as load_layout, parse_color};
 pub use paths::PathRules;

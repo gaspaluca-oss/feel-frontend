@@ -8,8 +8,15 @@
 //! alle API di Windows, ed e' il motivo per cui il frontend era impossibile da
 //! testare. Qui quella parte e' isolata.
 
+pub mod layout;
 pub mod model;
 pub mod text;
+
+pub use layout::{
+    Anchor, ArtworkSlot, Background, Color, Dimension, Element, ElementKind, Frame, Horizontal,
+    LabelKind, Layout, MenuStyle, Placement, Point, Rect, ScreenSaverStyle, ScreenSize, Shader,
+    Size, TextStyle, Vertical, LAYOUT_VERSION,
+};
 
 pub use model::{
     ArtworkPaths, Emulator, EmulatorKey, EmulatorRef, Game, GameKey, Gamelist, GamelistKey,
