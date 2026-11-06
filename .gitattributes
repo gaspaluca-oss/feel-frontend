@@ -1,0 +1,16 @@
+# Il repository conserva i file con LF: il progetto gira su Windows, ma i fine
+# riga non devono dipendere da chi ha committato.
+* text=auto eol=lf
+
+# Binari: nessuna conversione.
+*.png binary
+*.ico binary
+*.cur binary
+*.wav binary
+*.exe binary
+
+# Le fixture di FEEL 1.x sono file di testo: il lettore accetta comunque CRLF,
+# perche' le installazioni reali arrivano da Windows.
+*.ini text
+*.lst text
+*.sts text

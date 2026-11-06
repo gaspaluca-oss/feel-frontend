@@ -1,0 +1,16 @@
+[package]
+name = "feel-config"
+description = "Configurazione di FEEL 2.0 e importazione di una installazione FEEL 1.x."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+feel-core = { path = "../feel-core" }
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+feel-core = { path = "../feel-core" }

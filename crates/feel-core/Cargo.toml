@@ -1,0 +1,11 @@
+[package]
+name = "feel-core"
+description = "Modello dati di FEEL 2.0: piattaforme, emulatori, liste, giochi. Nessuna dipendenza da Windows."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true

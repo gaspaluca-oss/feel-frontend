@@ -5,6 +5,11 @@ migliorate, per Windows 7 SP1 → Windows 11.
 
 > **Stato: in costruzione.** Il codice di FEEL 1.x (C# / XNA) è conservato nel tag
 > [`feel-1.x-final`](../../tree/feel-1.x-final). Questo ramo è la riscrittura.
+>
+> Fatto finora: il modello dati (`feel-core`) e **l'importatore di una
+> installazione FEEL 1.x** (`feel-config`), con 41 test. Le rom, le liste, le
+> statistiche e la mappatura dei tasti della configurazione esistente vengono
+> lette e portate dentro la nuova libreria, senza inventare niente.
 
 ---
 
