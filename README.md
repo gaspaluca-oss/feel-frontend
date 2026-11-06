@@ -6,10 +6,11 @@ migliorate, per Windows 7 SP1 → Windows 11.
 > **Stato: in costruzione.** Il codice di FEEL 1.x (C# / XNA) è conservato nel tag
 > [`feel-1.x-final`](../../tree/feel-1.x-final). Questo ramo è la riscrittura.
 >
-> Fatto finora: il modello dati (`feel-core`) e **l'importatore di una
-> installazione FEEL 1.x** (`feel-config`), con 41 test. Le rom, le liste, le
-> statistiche e la mappatura dei tasti della configurazione esistente vengono
-> lette e portate dentro la nuova libreria, senza inventare niente.
+> Fatto finora, con 77 test: il modello dati (`feel-core`), **l'importatore di una
+> installazione FEEL 1.x** (`feel-config`), la libreria su SQLite (`feel-db`),
+> **l'avvio dell'emulatore** (`feel-launch`) e la riga di comando (`feel-cli`).
+> Il ciclo completo — importa la tua configurazione, avvia un gioco, registra il
+> tempo giocato — funziona già; manca tutto quello che si vede a schermo.
 
 ---
 
@@ -72,7 +73,17 @@ feel import "C:\Program Files\Feel" --db feel.sqlite
 # cosa c'è dentro
 feel info feel.sqlite
 feel list feel.sqlite mame-0
+
+# vedi esattamente cosa verrebbe eseguito, senza avviare niente
+feel launch feel.sqlite mame-0 pacman --dry-run
+
+# avvia, e registra il tempo giocato
+feel launch feel.sqlite mame-0 pacman
 ```
+
+`--dry-run` è la cosa da usare quando un gioco non parte: mostra l'eseguibile, il
+percorso della rom, la riga di comando e le eventuali applicazioni di pre e post
+avvio, esattamente come sarebbero eseguite.
 
 Se hai spostato le rom: `--remap "C:\Program Files\mame=D:\MAME"`, ripetibile.
 

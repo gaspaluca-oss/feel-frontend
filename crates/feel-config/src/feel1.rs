@@ -21,8 +21,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use feel_core::{
-    ArtworkPaths, Emulator, EmulatorKey, Game, GameKey, Gamelist, GamelistKey, LayoutKey, Library,
-    Platform, PlatformKey, PlayStats, Rotation, Timestamp,
+    ArtworkPaths, Emulator, EmulatorKey, Game, GameKey, Gamelist, GamelistKey, HookCommand,
+    LayoutKey, Library, Platform, PlatformKey, PlayStats, Rotation, Timestamp,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -328,6 +328,8 @@ impl Importer<'_> {
             gamelists: gamelist_keys.clone(),
             // Dedotto a fine importazione: serve aver visto le rom.
             recursive_roms: false,
+            pre_launch: self.read_hook(&ini, "pre_emulator"),
+            post_launch: self.read_hook(&ini, "post_emulator"),
         });
 
         for (order, gamelist_key) in gamelist_keys.iter().enumerate() {
@@ -419,6 +421,25 @@ impl Importer<'_> {
     }
 
     // -- statistiche ------------------------------------------------------------
+
+    /// Legge un'applicazione pre o post emulatore.
+    ///
+    /// In FEEL 1.x la chiave e' `pre_emulator_app_commandline` oppure
+    /// `pre_emulator_wait_for_exit`, quindi il prefisso distingue i due casi.
+    fn read_hook(&self, ini: &IniMap, prefix: &str) -> Option<HookCommand> {
+        let raw = ini.non_empty(&format!("{prefix}_app_commandline"))?;
+
+        // Come per l'eseguibile dell'emulatore, `[emulator_path]` qui e' il
+        // percorso concreto e va risolto subito.
+        let resolved = replace_ignore_case(&raw, "[emulator_path]", ini.string("emulator_path").trim());
+        let executable = self.resolve(&resolved)?;
+
+        Some(HookCommand {
+            executable,
+            arguments: translate_arguments(&ini.string(&format!("{prefix}_app_arguments"))),
+            wait_for_exit: ini.flag(&format!("{prefix}_wait_for_exit"), false),
+        })
+    }
 
     fn import_stats(&mut self, platform: &PlatformKey, emulator: &EmulatorKey) {
         let Some(data_dir) = self.data_dir.clone() else {

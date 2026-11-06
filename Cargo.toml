@@ -4,6 +4,7 @@ members = [
     "crates/feel-core",
     "crates/feel-config",
     "crates/feel-db",
+    "crates/feel-launch",
     "crates/feel-cli",
 ]
 

@@ -17,8 +17,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use feel_config::ImportOptions;
-use feel_core::Library;
+use feel_core::{GamelistKey, Library, Timestamp};
 use feel_db::Database;
+use feel_launch::LaunchPlan;
 
 const USO: &str = "\
 FEEL 2.0 - riga di comando
@@ -27,16 +28,18 @@ Uso:
   feel import <cartella-feel> --db <file> [--remap VECCHIO=NUOVO]...
   feel info   <file.db>
   feel list   <file.db> <lista>
+  feel launch <file.db> <lista> <rom> [--dry-run]
 
 Comandi:
   import   legge una installazione FEEL 1.x e scrive la libreria in un database
   info     mostra cosa contiene un database
   list     elenca i giochi di una lista
+  launch   avvia un gioco e registra il tempo di gioco
 
 Opzioni:
   --db <file>         database su cui lavorare (obbligatorio per import)
   --remap A=B         riscrive un percorso durante l'importazione (ripetibile)
-  --dry-run           importa e mostra il riepilogo, senza scrivere il database
+  --dry-run           import: importa senza scrivere; launch: mostra senza avviare
   -h, --help          questo aiuto
 ";
 
@@ -52,6 +55,7 @@ fn main() -> ExitCode {
         "import" => comando_import(&args[1..]),
         "info" => comando_info(&args[1..]),
         "list" => comando_list(&args[1..]),
+        "launch" => comando_launch(&args[1..]),
         altro => Err(format!("comando sconosciuto: {altro} (prova --help)").into()),
     };
 
@@ -220,6 +224,79 @@ fn comando_list(args: &[String]) -> Result<(), Box<dyn Error>> {
         );
     }
     println!("\n{} giochi.", giochi.len());
+
+    Ok(())
+}
+
+// ----------------------------------------------------------------------------------
+// launch
+// ----------------------------------------------------------------------------------
+
+fn comando_launch(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let path = args.first().ok_or("manca il file del database")?;
+    let gamelist = args.get(1).ok_or("manca il nome della lista")?;
+    let rom = args.get(2).ok_or("manca il nome della rom")?;
+    let dry_run = args.iter().any(|argomento| argomento == "--dry-run");
+
+    let db = Database::open(path)?;
+    let library = db.load_library()?;
+
+    let chiave_lista = GamelistKey::new(gamelist.clone());
+    let lista = library
+        .gamelist(&chiave_lista)
+        .ok_or_else(|| format!("lista '{gamelist}' non presente nel database"))?;
+    let emulatore = library
+        .emulator(&lista.platform, &lista.emulator)
+        .ok_or_else(|| format!("emulatore '{}/{}' non trovato", lista.platform, lista.emulator))?;
+    let gioco = library
+        .games_of(&chiave_lista)
+        .find(|g| g.key.as_str() == rom)
+        .ok_or_else(|| format!("'rom' non e' nella lista '{gamelist}'"))?;
+
+    let piano = LaunchPlan::resolve(emulatore, gioco);
+
+    println!("Emulatore : {}", piano.executable.display());
+    println!(
+        "Rom       : {}{}",
+        piano.rom_file.display(),
+        if piano.rom_found {
+            ""
+        } else {
+            "   (non trovata dove la cerchiamo)"
+        }
+    );
+    println!("Comando   : {}", piano.command_line().join(" "));
+    if let Some(hook) = &piano.pre_launch {
+        println!("Prima     : {} {}", hook.executable.display(), hook.arguments.join(" "));
+    }
+    if let Some(hook) = &piano.post_launch {
+        println!("Dopo      : {} {}", hook.executable.display(), hook.arguments.join(" "));
+    }
+
+    if dry_run {
+        println!("\n--dry-run: niente e' stato avviato.");
+        return Ok(());
+    }
+
+    let esito = piano.run()?;
+    let durata = esito.duration();
+
+    println!(
+        "\nUscito dopo {:.0} s con codice {:?}.",
+        durata.as_secs_f64(),
+        esito.status.code()
+    );
+    if !esito.success() {
+        println!("Codice diverso da zero: l'emulatore potrebbe aver avuto un problema.");
+    }
+
+    db.record_play(
+        &(lista.platform.clone(), lista.emulator.clone()),
+        &gioco.key,
+        durata,
+        Timestamp::now(),
+    )?;
+    println!("Partita registrata.");
 
     Ok(())
 }

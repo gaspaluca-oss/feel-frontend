@@ -183,6 +183,35 @@ fn una_versione_sconosciuta_viene_rifiutata() {
 }
 
 #[test]
+fn registrare_una_partita_accumula() {
+    let mut db = Database::open_in_memory().unwrap();
+    db.store_library(&libreria_importata()).unwrap();
+
+    let arcade_mame = (PlatformKey::new("arcade"), EmulatorKey::new("mame"));
+    let pacman = GameKey::new("pacman");
+
+    let prima = db.stats(&arcade_mame, &pacman).unwrap().unwrap();
+    assert_eq!(prima.count, 42);
+
+    // Due partite: il conteggio cresce e i tempi si sommano.
+    let quando = feel_core::Timestamp::from_unix_seconds(1_709_208_896);
+    db.record_play(&arcade_mame, &pacman, Duration::from_secs(90), quando).unwrap();
+    db.record_play(&arcade_mame, &pacman, Duration::from_secs(30), quando).unwrap();
+
+    let dopo = db.stats(&arcade_mame, &pacman).unwrap().unwrap();
+    assert_eq!(dopo.count, 44);
+    assert_eq!(dopo.total, prima.total + Duration::from_secs(120));
+    assert_eq!(dopo.last.unwrap().to_string(), "2024-02-29 12:14:56");
+
+    // Un gioco mai giocato riceve la sua prima riga, non un errore.
+    let s1945 = GameKey::new("s1945");
+    db.record_play(&arcade_mame, &s1945, Duration::from_secs(10), quando).unwrap();
+    let nuova = db.stats(&arcade_mame, &s1945).unwrap().unwrap();
+    assert_eq!(nuova.count, 1);
+    assert_eq!(nuova.total, Duration::from_secs(10));
+}
+
+#[test]
 fn una_libreria_vuota_si_salva_e_si_rilegge() {
     let mut db = Database::open_in_memory().unwrap();
     db.store_library(&Library::default()).unwrap();

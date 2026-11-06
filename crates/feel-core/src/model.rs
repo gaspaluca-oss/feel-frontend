@@ -127,6 +127,41 @@ impl std::fmt::Display for Timestamp {
 }
 
 impl Timestamp {
+    /// L'istante attuale, **in UTC**.
+    ///
+    /// UTC e non ora locale: ricavare il fuso senza una libreria di date
+    /// significherebbe leggere `/etc/localtime` su Linux e chiamare API di
+    /// sistema su Windows. Un frontend da cabinato ha un solo fuso, e averlo
+    /// in UTC rende le statistiche confrontabili fra macchine diverse.
+    pub fn now() -> Self {
+        match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(trascorso) => Self::from_unix_seconds(trascorso.as_secs() as i64),
+            // Orologio prima del 1970: non e' un motivo per andare in panico,
+            // basta non scrivere un istante inventato.
+            Err(_) => Self::from_unix_seconds(0),
+        }
+    }
+
+    /// Da secondi Unix a data civile.
+    ///
+    /// L'algoritmo e' quello classico di Howard Hinnant (days from civil,
+    /// al contrario): niente tabelle di giorni per mese e niente anni
+    /// bisestili scritti a mano, quindi niente da sbagliare.
+    pub fn from_unix_seconds(seconds: i64) -> Self {
+        let days = seconds.div_euclid(86_400);
+        let in_day = seconds.rem_euclid(86_400);
+        let (year, month, day) = civil_from_days(days);
+
+        Timestamp {
+            year,
+            month,
+            day,
+            hour: (in_day / 3_600) as u8,
+            minute: ((in_day % 3_600) / 60) as u8,
+            second: (in_day % 60) as u8,
+        }
+    }
+
     /// Legge il formato con cui questo tipo viene scritto: `AAAA-MM-GG hh:mm:ss`.
     ///
     /// È il formato che finisce nel database, quindi serve sia a scrivere sia a
@@ -175,6 +210,22 @@ pub struct PlayStats {
     pub total: Duration,
     /// Ultima partita. `None` se il file non lo riporta.
     pub last: Option<Timestamp>,
+}
+
+/// Un'applicazione da eseguire prima o dopo l'emulatore.
+///
+/// FEEL 1.x la usa per le cose che l'emulatore da solo non sa fare: avviare un
+/// wrapper che imposta la risoluzione, liberare la scheda audio da un processo
+/// che la tiene occupata, sincronizzare i salvataggi.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HookCommand {
+    pub executable: PathBuf,
+    pub arguments: Vec<String>,
+    /// Se vero, aspettare che finisca prima di proseguire.
+    ///
+    /// Un pre-avvio che imposta la risoluzione va aspettato; uno che lancia un
+    /// programma di servizio no.
+    pub wait_for_exit: bool,
 }
 
 /// Dove stanno le immagini e i video di un emulatore.
@@ -227,6 +278,10 @@ pub struct Emulator {
     pub gamelists: Vec<GamelistKey>,
     /// Esegui le rom nelle sottocartelle di `rom_path`.
     pub recursive_roms: bool,
+    /// Applicazione da eseguire prima dell'emulatore.
+    pub pre_launch: Option<HookCommand>,
+    /// Applicazione da eseguire dopo che l'emulatore e' uscito.
+    pub post_launch: Option<HookCommand>,
 }
 
 /// Una lista di giochi, come `All Games` o `Best Games`.
@@ -345,6 +400,24 @@ impl Library {
     }
 }
 
+/// Da giorni dal 1970-01-01 alla data civile `(anno, mese, giorno)`.
+fn civil_from_days(days: i64) -> (i32, u8, u8) {
+    // Sposta l'origine al 0000-03-01, cosi' il mese bisestile e' l'ultimo
+    // e il calcolo non ha casi particolari.
+    let shifted = days + 719_468;
+    let era = if shifted >= 0 { shifted } else { shifted - 146_096 } / 146_097;
+    let day_of_era = (shifted - era * 146_097) as u64;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era as i64 + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_index = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
+    let month = if month_index < 10 { month_index + 3 } else { month_index - 9 };
+
+    ((year + i64::from(month <= 2)) as i32, month as u8, day as u8)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,6 +454,27 @@ mod tests {
             second: 0,
         };
         assert_eq!(t.to_string(), "2018-03-12 21:14:00");
+    }
+
+    #[test]
+    fn converte_secondi_unix_in_data() {
+        // Mezzanotte del 1970.
+        assert_eq!(Timestamp::from_unix_seconds(0).to_string(), "1970-01-01 00:00:00");
+        // Un istante noto: 2024-02-29 12:14:56 UTC (anno bisestile).
+        assert_eq!(
+            Timestamp::from_unix_seconds(1_709_208_896).to_string(),
+            "2024-02-29 12:14:56"
+        );
+        // Fine anno, per controllare il cambio di anno.
+        assert_eq!(Timestamp::from_unix_seconds(1_704_067_199).to_string(), "2023-12-31 23:59:59");
+        assert_eq!(Timestamp::from_unix_seconds(1_704_067_200).to_string(), "2024-01-01 00:00:00");
+    }
+
+    #[test]
+    fn converte_anche_date_prima_del_1970() {
+        // Non capita con le statistiche, ma un algoritmo sbagliato qui
+        // produrrebbe mesi negativi invece di un errore visibile.
+        assert_eq!(Timestamp::from_unix_seconds(-1).to_string(), "1969-12-31 23:59:59");
     }
 
     #[test]

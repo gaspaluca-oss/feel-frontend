@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use feel_core::{
     ArtworkPaths, Emulator, EmulatorKey, EmulatorRef, Game, GameKey, Gamelist, GamelistKey,
-    LayoutKey, Library, Platform, PlatformKey, PlayStats, Rotation, Timestamp,
+    HookCommand, LayoutKey, Library, Platform, PlatformKey, PlayStats, Rotation, Timestamp,
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use thiserror::Error;
@@ -172,8 +172,10 @@ impl Database {
                 "INSERT INTO emulator (
                      platform, id, title, executable, arguments, working_dir, rom_path,
                      rom_extensions, layout, recursive_roms, position,
-                     snapshot_path, video_path, marquee_path, cabinet_path, controls_path
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                     snapshot_path, video_path, marquee_path, cabinet_path, controls_path,
+                     pre_launch, post_launch
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                           ?17, ?18)",
                 params![
                     emulator.platform.as_str(),
                     emulator.key.as_str(),
@@ -191,6 +193,8 @@ impl Database {
                     emulator.artwork.marquee.as_ref().map(|p| p.to_string_lossy().into_owned()),
                     emulator.artwork.cabinet.as_ref().map(|p| p.to_string_lossy().into_owned()),
                     emulator.artwork.control_panel.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                    encode_hook(emulator.pre_launch.as_ref())?,
+                    encode_hook(emulator.post_launch.as_ref())?,
                 ],
             )?;
         }
@@ -299,7 +303,8 @@ impl Database {
             let mut stmt = self.conn.prepare(
                 "SELECT platform, id, title, executable, arguments, working_dir, rom_path,
                         rom_extensions, layout, recursive_roms,
-                        snapshot_path, video_path, marquee_path, cabinet_path, controls_path
+                        snapshot_path, video_path, marquee_path, cabinet_path, controls_path,
+                        pre_launch, post_launch
                  FROM emulator ORDER BY platform, position",
             )?;
             let rows = stmt.query_map([], |row| {
@@ -308,6 +313,8 @@ impl Database {
                 let arguments: String = row.get(4)?;
                 let rom_extensions: String = row.get(7)?;
                 let layout: Option<String> = row.get(8)?;
+                let pre_launch: Option<String> = row.get(15)?;
+                let post_launch: Option<String> = row.get(16)?;
                 Ok((
                     platform,
                     Emulator {
@@ -329,6 +336,8 @@ impl Database {
                         layout: layout.map(LayoutKey::new),
                         gamelists: Vec::new(),
                         recursive_roms: row.get::<_, i64>(9)? != 0,
+                        pre_launch: decode_hook(pre_launch.as_deref())?,
+                        post_launch: decode_hook(post_launch.as_deref())?,
                     },
                 ))
             })?;
@@ -463,6 +472,36 @@ impl Database {
         Ok(out)
     }
 
+    /// Registra una partita: incrementa il conteggio, somma il tempo e aggiorna
+    /// l'istante dell'ultima volta.
+    ///
+    /// Un solo `INSERT ... ON CONFLICT`, non una lettura piu' una scrittura:
+    /// cosi' non c'e' finestra fra il controllo e l'aggiornamento.
+    pub fn record_play(
+        &self,
+        emulator: &EmulatorRef,
+        game: &GameKey,
+        played: Duration,
+        when: Timestamp,
+    ) -> Result<(), DbError> {
+        self.conn.execute(
+            "INSERT INTO play (platform, emulator, game, count, total_secs, last_played)
+             VALUES (?1, ?2, ?3, 1, ?4, ?5)
+             ON CONFLICT (platform, emulator, game) DO UPDATE SET
+                 count      = count + 1,
+                 total_secs = total_secs + excluded.total_secs,
+                 last_played = excluded.last_played",
+            params![
+                emulator.0.as_str(),
+                emulator.1.as_str(),
+                game.as_str(),
+                played.as_secs() as i64,
+                when.to_string(),
+            ],
+        )?;
+        Ok(())
+    }
+
     /// Le statistiche di un gioco.
     pub fn stats(&self, emulator: &EmulatorRef, game: &GameKey) -> Result<Option<PlayStats>, DbError> {
         let found: Option<(i64, i64, Option<String>)> = self
@@ -493,6 +532,22 @@ fn encode_list(values: &[String]) -> Result<String, DbError> {
 
 fn decode_list(raw: &str) -> Result<Vec<String>, DbError> {
     Ok(serde_json::from_str(raw)?)
+}
+
+/// Le applicazioni pre/post emulatore hanno campi opzionali di tipo diverso
+/// dagli altri, quindi non entrano in `encode_list`.
+fn encode_hook(hook: Option<&HookCommand>) -> Result<Option<String>, DbError> {
+    match hook {
+        Some(hook) => Ok(Some(serde_json::to_string(hook)?)),
+        None => Ok(None),
+    }
+}
+
+fn decode_hook(raw: Option<&str>) -> Result<Option<HookCommand>, DbError> {
+    match raw {
+        Some(text) => Ok(Some(serde_json::from_str(text)?)),
+        None => Ok(None),
+    }
 }
 
 fn rotation_to_text(rotation: Rotation) -> String {

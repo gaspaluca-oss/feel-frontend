@@ -9,7 +9,9 @@
 //! dipendere dal fuso orario del sistema che l'ha scritto.
 
 /// Versione dello schema. Va alzata a ogni modifica incompatibile.
-pub const SCHEMA_VERSION: i64 = 1;
+///
+/// 1 -> 2: aggiunte le applicazioni pre/post emulatore.
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// Chiave sotto cui la versione e' salvata nella tabella `meta`.
 pub const VERSION_KEY: &str = "schema_version";
@@ -43,6 +45,8 @@ CREATE TABLE emulator (
     marquee_path   TEXT,
     cabinet_path   TEXT,
     controls_path  TEXT,
+    pre_launch     TEXT,
+    post_launch    TEXT,
     PRIMARY KEY (platform, id)
 );
 

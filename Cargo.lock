@@ -55,6 +55,7 @@ dependencies = [
  "feel-config",
  "feel-core",
  "feel-db",
+ "feel-launch",
 ]
 
 [[package]]
@@ -81,6 +82,14 @@ dependencies = [
  "feel-core",
  "rusqlite",
  "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "feel-launch"
+version = "0.1.0"
+dependencies = [
+ "feel-core",
  "thiserror",
 ]
 

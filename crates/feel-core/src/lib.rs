@@ -13,6 +13,6 @@ pub mod text;
 
 pub use model::{
     ArtworkPaths, Emulator, EmulatorKey, EmulatorRef, Game, GameKey, Gamelist, GamelistKey,
-    LayoutKey, Library, Platform, PlatformKey, PlayStats, Rotation, Timestamp,
+    HookCommand, LayoutKey, Library, Platform, PlatformKey, PlayStats, Rotation, Timestamp,
 };
 pub use text::cleanup_name;

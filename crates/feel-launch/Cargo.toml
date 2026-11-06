@@ -1,0 +1,12 @@
+[package]
+name = "feel-launch"
+description = "Avvio dell'emulatore e ritorno al frontend."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+feel-core = { path = "../feel-core" }
+thiserror.workspace = true
