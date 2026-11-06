@@ -2,9 +2,15 @@
 #
 # Da 1.78 in poi la std importa bcryptprimitives.dll (Windows 8+) e
 # api-ms-win-core-synch-l1-2-0.dll: su Windows 7 il loader si ferma subito.
-# Non e' configurabile, va verificato a ogni cambio di versione con tools/pecheck.py.
+# Non e' configurabile, va riverificato a ogni cambio di versione con tools/pecheck.py.
 # Vedi docs/ARCHITETTURA.md, decisione D3.
+#
+# L'host e' i686-pc-windows-gnu, non x86_64: i build script e le proc-macro si
+# compilano per l'host, quindi con l'host MSVC servirebbe link.exe di Visual Studio.
+# Tenendo tutto a 32 bit serve solo MinGW i686, e in piu' l'ambiente di build
+# corrisponde esattamente all'ambiente di esecuzione.
+#
+# Da installare una volta sola (rustup rifiuta gli host non nativi senza il flag):
+#   rustup toolchain install 1.77.2-i686-pc-windows-gnu --profile minimal --force-non-host
 [toolchain]
-channel = "1.77.2"
-targets = ["i686-pc-windows-gnu"]
-profile = "minimal"
+channel = "1.77.2-i686-pc-windows-gnu"

@@ -81,6 +81,15 @@ casi, quindi l'unico segnale vero è la tabella degli import.
 Il prezzo è una toolchain di aprile 2024. È il costo dichiarato di Windows 7: se il
 floor sale a Windows 10, il pin si rimuove e si torna su stable.
 
+**Anche l'host è `i686-pc-windows-gnu`.** I build script e le proc-macro si compilano
+per l'host, non per il target: con l'host MSVC servirebbe `link.exe` di Visual Studio,
+che non è installato, e che in questa shell verrebbe per giunta shadowato da
+`/usr/bin/link` di MSYS. Tenendo host e target entrambi a 32 bit serve solo MinGW i686,
+e l'ambiente di build coincide con l'ambiente di esecuzione.
+
+Verificato end-to-end: build script eseguiti, proc-macro caricate (`serde_derive`),
+link con MinGW, test eseguito e superato.
+
 ### D4 — Dati: SQLite embedded
 
 Al posto dei file di testo `data/*.lst` e `data/*.sts` di FEEL 1.x. Un solo database

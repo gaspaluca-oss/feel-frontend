@@ -54,23 +54,30 @@ Universal CRT (KB2999226).
 
 ## Compilare
 
-Serve un linker **MinGW-w64 a 32 bit**: Rust non ne include uno. Su questa macchina
-è arrivato con MSYS2.
+Servono due cose: un linker **MinGW-w64 a 32 bit** (Rust non ne include uno) e la
+toolchain Rust, che `rust-toolchain.toml` fissa già.
 
 ```powershell
 winget install --id MSYS2.MSYS2
 C:\msys64\usr\bin\bash -lc "pacman -S --noconfirm mingw-w64-i686-gcc"
+
+# rustup rifiuta gli host non nativi senza --force-non-host: e' voluto, l'host
+# e' a 32 bit per restare coerente con il target.
+rustup toolchain install 1.77.2-i686-pc-windows-gnu --profile minimal --force-non-host
 ```
 
-Poi `C:\msys64\mingw32\bin` deve stare nel `PATH`. La toolchain Rust è già fissata da
-`rust-toolchain.toml`, non c'è niente da scegliere:
+Poi `C:\msys64\mingw32\bin` deve stare nel `PATH`. A quel punto:
 
 ```bash
-cargo build --release --target i686-pc-windows-gnu
+cargo test            # build script, proc-macro, link ed esecuzione
+cargo build --release
 
 # controlla che il binario sia davvero caricabile su Windows 7
-python tools/pecheck.py target/i686-pc-windows-gnu/release/feel.exe
+python tools/pecheck.py target/release/feel.exe
 ```
+
+Non c'è nessun `--target` da passare: host e target sono entrambi
+`i686-pc-windows-gnu`.
 
 `pecheck.py` non è un extra: è la rete di sicurezza che impedisce a un aggiornamento
 di toolchain di rompere silenziosamente il supporto a Windows 7. Vedi
