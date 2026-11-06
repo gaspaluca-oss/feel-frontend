@@ -1,46 +1,65 @@
-# F.E.E.L. (FrontEnd - Emulator Launcher)
+# FEEL 2.0
 
----------------------------------------------------------------------------------------
-Official web site: https://feelfrontend.altervista.org (discontinued)
+Frontend per PC e cabinati da retrogaming. Riscrittura di FEEL con grafica e funzionalità
+migliorate, per Windows 7 SP1 → Windows 11.
 
-Graphic frontend for retrogaming PCs (mame-cabinets, bartop, etc.) with animations, snap/videosnap management, customizable skins and configurable for infinite emulators and game lists and statistics controlled by arcade sticks, spinner, trackball, etc.
+> **Stato: in costruzione.** Il codice di FEEL 1.x (C# / XNA) è conservato nel tag
+> [`feel-1.x-final`](../../tree/feel-1.x-final). Questo ramo è la riscrittura.
 
-Provides support for horizontal and vertical screens (15/31khz, CRT/LCD) and LCD button dashboards through SmartASD card (http://www.arcadeitalia.net/viewtopic.php?t=20198).
+---
 
-## Technical info
-Totally written in c# using
-- Microsoft .NET framework 3.5 (VS 2008 EE+)
-- Microsoft XNA Game Studio 3.1
-- SharpDx https://github.com/sharpdx/SharpDX
-- SmartASD libs
-- other smaller libs
+## Cosa cambia rispetto a FEEL 1.x
 
-This sw stack allows execution on almost *any* Windows PC, from oldest "usable" ones (say WinXP) to newest.
-HW requirements are minimal (Intel P4 or similar, with even very old video cards, are adequate).
+**Grafica**
 
-#### Building FEEL
+- pipeline a shader: CRT (scanline, maschera RGB, curvatura), LCD, bloom, aberrazione cromatica
+- layout con ancoraggi e unità relative invece di coordinate assolute in pixel:
+  la stessa schermata va bene da 640×480 a 4K
+- animazioni con timeline ed easing invece di sequenze di PNG
+- marquee e DMD su monitor secondario
+- caricamento asincrono con cache: niente stutter passando da un gioco all'altro
 
-Steps for building:
+**Funzionalità**
 
-- install Microsoft .NET Framework 3.5 (it's usually on board on all recent Win OSes: please refer to specific doc)
-- install Microsoft Visual C# Express 2008 (https://archive.org/details/vs-2008-express-w-sp-1) or greater
-- install Microsoft XNA Game Studio 3.1 (https://www.microsoft.com/en-us/download/details.aspx?id=39)
-- start VC2008 and create a new empty project
-- clone FEEL repository inside project's root directory
-- add FEEL project using "Add.. Existing project" and selecting Feel.csproj
-- build project either in Debug or Release mode
-- copy all items in \__init_files__ (changelog, config, data, layouts...) into bin\x86\\[Debug|Release] directory 
+- libreria in SQLite: filtri, playlist, preferiti, statistiche, ricerca full-text
+- scraper integrato con coda riprendibile
+- mappatura dei controlli dentro al frontend, con verifica dal vivo
+- editor di layout visuale
+- profili per singolo gioco di primo livello
+- LED dei pulsanti con API a moduli (LED-Wiz, PacDrive, Ultimarc)
+- importazione diretta della configurazione FEEL 1.x esistente
 
-Now you're ready to run the frontend.
+---
 
-## Other info/wiki/others
-*Write me*
+## Requisiti
 
-## Licensing
-Copyright (C) 2018 Maurizio Montel
+| | |
+|---|---|
+| Sistema | Windows 7 SP1 → Windows 11 |
+| Architettura | x86 (32 bit) primaria, x64 secondaria |
+| GPU | Direct3D 9 con pixel shader 2.0 |
 
-This program is free software: you can redistribute it and/or modify it under the terms of the GNU Lesser General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+Su Windows 7 serve SP1 con l'Universal CRT (KB2999226), presente su qualsiasi sistema aggiornato.
 
-This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public License for more details.
+---
 
-You should have received a copy of the GNU Lesser General Public License along with this program. If not, see http://www.gnu.org/licenses/.
+## Documenti
+
+- [`docs/ARCHITETTURA.md`](docs/ARCHITETTURA.md) — vincoli, decisioni tecniche, struttura, roadmap
+- [`mockup/frontend.html`](mockup/frontend.html) — prototipo visivo, apribile con un browser
+
+---
+
+## Compilare
+
+Il progetto è agli inizi: la toolchain Rust è fissata in `rust-toolchain.toml`.
+
+```bash
+cargo build --release
+```
+
+---
+
+## Licenza
+
+Ereditata da FEEL: GNU LGPL v3 o successiva. Vedi [`__license.txt`](__license.txt).
