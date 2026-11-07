@@ -12,6 +12,8 @@
 //!
 //! Il layout si ottiene da: feel layout "cartella-feel" --out cartella
 
+mod impostazioni;
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
@@ -31,6 +33,17 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Cosa sta facendo il frontend in questo momento.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Modalita {
+    /// Si scorre la lista e si sceglie un gioco.
+    Sfoglia,
+    /// Si stanno cambiando le impostazioni.
+    Impostazioni,
+    /// Nessuno tocca niente da un po': il cabinato si anima da solo.
+    Attesa,
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -56,8 +69,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         args.drain(posizione..=(posizione + 1).min(args.len() - 1));
     }
 
+    // Letto prima di toglierlo dall'elenco: altrimenti si cerca un flag che
+    // non c'e' piu'.
+    let mostra_impostazioni = args.iter().any(|a| a == "--mostra-impostazioni");
+    args.retain(|a| a != "--mostra-impostazioni");
+
     if args.len() < 3 {
-        eprintln!("Uso: feel-app <database> <lista> <layout.json> [--auto-exit N]");
+        eprintln!("Uso: feel-app <database> <lista> <layout.json> [--auto-exit N] [--mostra-impostazioni]");
         return Ok(());
     }
 
@@ -70,7 +88,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Le impostazioni stanno accanto al database: un file solo per ogni
     // libreria, cosi' due cabinati con librerie diverse non si pestano i piedi.
     let percorso_impostazioni = database.with_file_name("feel.json");
-    let impostazioni = Settings::load_or_create(&percorso_impostazioni)?;
+    let mut impostazioni = Settings::load_or_create(&percorso_impostazioni)?;
     println!("Config : {}", percorso_impostazioni.display());
 
     let db = Database::open(&database)?;
@@ -149,23 +167,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         ));
     }
 
-    let effetto = match impostazioni.video.shader {
-        feel_core::Shader::None => Effetto::Nessuno,
-        feel_core::Shader::Crt => Effetto::Crt,
-        feel_core::Shader::Lcd => Effetto::Lcd,
-        feel_core::Shader::Scanlines => Effetto::Scanline,
-    };
-    let rotazione = match impostazioni.video.rotate {
-        feel_config::Rotate::None => Rotazione::Nessuna,
-        feel_config::Rotate::Left => Rotazione::Sinistra,
-        feel_config::Rotate::Right => Rotazione::Destra,
-    };
-
     let mut scelta = 0usize;
     let mut primo_visibile = 0usize;
     let mut font: Option<usize> = None;
     let mut scatto_fatto = false;
     let avvio = Instant::now();
+
+    let mut modalita = if mostra_impostazioni {
+        Modalita::Impostazioni
+    } else {
+        Modalita::Sfoglia
+    };
+    let mut voce_impostazioni = 0usize;
+    let mut ultimo_input = Instant::now();
+    let mut ultimo_avanzamento = Instant::now();
+
+    // Effetto e rotazione si ricalcolano quando cambiano le impostazioni, non
+    // a ogni fotogramma: sono due valori, non un calcolo.
+    let mut effetto = effetto_da(impostazioni.video.shader);
+    let mut rotazione = rotazione_da(impostazioni.video.rotate);
 
     // Cache dell'immagine del gioco selezionato: caricare una texture a ogni
     // fotogramma sarebbe uno spreco e farebbe scattare il disco sessanta
@@ -188,6 +208,62 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         PhysicalKey::Code(c) => c,
                         _ => return,
                     };
+
+                    ultimo_input = Instant::now();
+
+                    // In modalita' attrattiva un tasto qualsiasi riporta al
+                    // frontend senza fare altro: chi tocca il cabinato vuole
+                    // vedere la lista, non cambiare gioco alla cieca.
+                    if modalita == Modalita::Attesa {
+                        modalita = Modalita::Sfoglia;
+                        ultimo_avanzamento = Instant::now();
+                        graphics.window().request_redraw();
+                        return;
+                    }
+
+                    if modalita == Modalita::Impostazioni {
+                        if codice == KeyCode::F1
+                            || Some(codice) == tasto(&impostazioni.input.back)
+                        {
+                            if let Err(err) = impostazioni.save(&percorso_impostazioni) {
+                                eprintln!("non riesco a salvare le impostazioni: {err}");
+                            }
+                            modalita = Modalita::Sfoglia;
+                        } else if Some(codice) == tasto(&impostazioni.input.down) {
+                            voce_impostazioni =
+                                (voce_impostazioni + 1) % impostazioni::VOCI.len();
+                        } else if Some(codice) == tasto(&impostazioni.input.up) {
+                            voce_impostazioni = (voce_impostazioni + impostazioni::VOCI.len() - 1)
+                                % impostazioni::VOCI.len();
+                        } else if Some(codice) == tasto(&impostazioni.input.right) {
+                            applica_modifica(
+                                &mut impostazioni,
+                                voce_impostazioni,
+                                1,
+                                &mut effetto,
+                                &mut rotazione,
+                                graphics.window(),
+                            );
+                        } else if Some(codice) == tasto(&impostazioni.input.left) {
+                            applica_modifica(
+                                &mut impostazioni,
+                                voce_impostazioni,
+                                -1,
+                                &mut effetto,
+                                &mut rotazione,
+                                graphics.window(),
+                            );
+                        }
+                        graphics.window().request_redraw();
+                        return;
+                    }
+
+                    if codice == KeyCode::F1 {
+                        modalita = Modalita::Impostazioni;
+                        voce_impostazioni = 0;
+                        graphics.window().request_redraw();
+                        return;
+                    }
 
                     if Some(codice) == tasto(&impostazioni.input.back) {
                         controllo.exit();
@@ -225,6 +301,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 _ => {}
             },
             Event::AboutToWait => {
+                // Modalita' attrattiva: dopo l'attesa, il cabinato comincia a
+                // scorrere i giochi da solo. E' quello che faceva FEEL 1.x e
+                // quello che si aspetta chi passa davanti a un cabinato spento
+                // in sala giochi.
+                if modalita == Modalita::Sfoglia
+                    && impostazioni.screensaver.enabled
+                    && totale > 0
+                    && ultimo_input.elapsed().as_secs()
+                        >= impostazioni.screensaver.delay_secs as u64
+                {
+                    modalita = Modalita::Attesa;
+                    ultimo_avanzamento = Instant::now();
+                }
+
+                if modalita == Modalita::Attesa
+                    && ultimo_avanzamento.elapsed().as_secs()
+                        >= impostazioni.screensaver.slide_secs.max(2) as u64
+                {
+                    scelta = (scelta + 1) % totale.max(1);
+                    ultimo_avanzamento = Instant::now();
+                    graphics.window().request_redraw();
+                }
+
                 if let Some(limite) = auto_exit {
                     if avvio.elapsed() > limite {
                         controllo.exit();
@@ -396,6 +495,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
+                // La schermata delle impostazioni si disegna sopra a tutto,
+                // dentro la scena, cosi' prende anche lei l'effetto CRT.
+                if modalita == Modalita::Impostazioni {
+                    disegna_impostazioni(
+                        &mut graphics,
+                        font,
+                        &impostazioni,
+                        voce_impostazioni,
+                        schermo,
+                    );
+                }
+
                 // Ultimo passaggio: effetto CRT, rotazione, e a schermo.
                 graphics.end_scene(effetto, rotazione);
 
@@ -483,6 +594,144 @@ fn trova_immagine(cartella: &std::path::Path, nome: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn effetto_da(shader: feel_core::Shader) -> Effetto {
+    match shader {
+        feel_core::Shader::None => Effetto::Nessuno,
+        feel_core::Shader::Crt => Effetto::Crt,
+        feel_core::Shader::Lcd => Effetto::Lcd,
+        feel_core::Shader::Scanlines => Effetto::Scanline,
+    }
+}
+
+fn rotazione_da(rotate: feel_config::Rotate) -> Rotazione {
+    match rotate {
+        feel_config::Rotate::None => Rotazione::Nessuna,
+        feel_config::Rotate::Left => Rotazione::Sinistra,
+        feel_config::Rotate::Right => Rotazione::Destra,
+    }
+}
+
+/// Applica un cambiamento dalla schermata e aggiorna cio' che ne dipende.
+fn applica_modifica(
+    impostazioni: &mut Settings,
+    voce: usize,
+    verso: i32,
+    effetto: &mut Effetto,
+    rotazione: &mut Rotazione,
+    finestra: &winit::window::Window,
+) {
+    let Some(riga) = impostazioni::VOCI.get(voce) else {
+        return;
+    };
+
+    let esito = impostazioni::cambia(riga.campo, verso, impostazioni);
+
+    *effetto = effetto_da(impostazioni.video.shader);
+    *rotazione = rotazione_da(impostazioni.video.rotate);
+
+    if esito == impostazioni::Esito::Finestra {
+        if impostazioni.video.fullscreen {
+            finestra.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+        } else {
+            finestra.set_fullscreen(None);
+        }
+    }
+}
+
+/// Disegna la schermata delle impostazioni sopra a tutto.
+fn disegna_impostazioni(
+    graphics: &mut feel_render::Graphics,
+    font: Option<usize>,
+    impostazioni: &Settings,
+    voce: usize,
+    schermo: (f32, f32),
+) {
+    let mut quads = Vec::new();
+
+    // Velo scuro, per far capire che sotto c'e' il frontend ma non si tocca.
+    quads.push(Quad::new(
+        Rect::new(0.0, 0.0, schermo.0, schermo.1),
+        Color::rgba(0, 0, 0, 190),
+    ));
+
+    let larghezza = schermo.0 * 0.66;
+    let altezza = schermo.1 * 0.80;
+    let x = (schermo.0 - larghezza) / 2.0;
+    let y = (schermo.1 - altezza) / 2.0;
+
+    quads.push(Quad::new(
+        Rect::new(x, y, larghezza, altezza),
+        Color::rgb(22, 18, 32),
+    ));
+    // Filo colorato in cima: da' un bordo alla finestra senza disegnarne quattro.
+    quads.push(Quad::new(
+        Rect::new(x, y, larghezza, 3.0),
+        Color::rgb(255, 157, 46),
+    ));
+
+    let riga_altezza = altezza * 0.072;
+    let inizio = y + altezza * 0.17;
+
+    if voce < impostazioni::VOCI.len() {
+        let riga = Rect::new(x + 12.0, inizio + voce as f32 * riga_altezza, larghezza - 24.0, riga_altezza - 2.0);
+        quads.push(Quad::new(riga, Color::rgb(60, 40, 70)));
+    }
+
+    graphics.draw_quads(&quads);
+
+    let Some(id) = font else {
+        return;
+    };
+
+    let dimensione = graphics.line_height(id) / 1.25;
+
+    let _ = graphics.draw_text(
+        id,
+        "IMPOSTAZIONI",
+        (x + 16.0, y + altezza * 0.05),
+        Color::rgb(255, 157, 46),
+    );
+
+    for (indice, riga) in impostazioni::VOCI.iter().enumerate() {
+        let alto = inizio + indice as f32 * riga_altezza;
+        let colore = if indice == voce {
+            Color::rgb(255, 236, 190)
+        } else {
+            Color::rgb(180, 175, 165)
+        };
+
+        let _ = graphics.draw_text(id, riga.etichetta, (x + 20.0, alto), colore);
+
+        // Il valore allineato a destra: si calcola la larghezza, perche' non
+        // abbiamo un allineamento automatico nel disegno del testo.
+        let valore = impostazioni::valore(riga.campo, impostazioni);
+        let larghezza_valore = graphics.measure_text(id, &valore);
+        let _ = graphics.draw_text(
+            id,
+            &valore,
+            (x + larghezza - 20.0 - larghezza_valore, alto),
+            if indice == voce {
+                Color::rgb(140, 230, 140)
+            } else {
+                Color::rgb(120, 190, 120)
+            },
+        );
+    }
+
+    let nota = impostazioni::VOCI
+        .get(voce)
+        .map(|riga| riga.nota)
+        .unwrap_or("");
+    let _ = graphics.draw_text(
+        id,
+        nota,
+        (x + 20.0, y + altezza * 0.90),
+        Color::rgb(150, 145, 140),
+    );
+
+    let _ = dimensione;
 }
 
 /// Traduce un nome di tasto delle impostazioni in un codice di winit.
