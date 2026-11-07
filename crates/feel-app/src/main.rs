@@ -83,6 +83,42 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("Layout : {}", layout.name);
     println!("Esc per uscire, frecce per scorrere.");
 
+    // Le immagini del layout stanno nella stessa cartella del suo JSON.
+    let cartella_layout = percorso_layout
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_default();
+
+    // Un'immagine che non si carica va detta: senza il messaggio si vede solo
+    // uno schermo nero e non si sa perche'.
+    let mut carica = |nome: &str| -> Option<usize> {
+        let percorso = cartella_layout.join(nome);
+        if !percorso.is_file() {
+            eprintln!("immagine assente: {}", percorso.display());
+            return None;
+        }
+        match graphics.load_texture(&percorso) {
+            Ok(id) => {
+                println!("Immagine: {nome}");
+                Some(id)
+            }
+            Err(err) => {
+                eprintln!("immagine {nome}: {err}");
+                None
+            }
+        }
+    };
+
+    let sfondo = layout
+        .background
+        .as_ref()
+        .and_then(|fondo| fondo.image.as_deref())
+        .and_then(&mut carica);
+
+    // Immagine di ripiego quando un gioco non ha la sua: e' quella che FEEL 1.x
+    // disegna dentro il riquadro dello snapshot.
+    let segnaposto = carica("snap.png");
+
     let mut scelta = 0usize;
     let mut primo_visibile = 0usize;
     let mut font: Option<usize> = None;
@@ -134,8 +170,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let schermo = graphics.screen();
                 let mut quads = Vec::new();
 
-                // Sfondo del layout.
-                quads.push(Quad::full(schermo, layout.screensaver.background));
+                // Il colore di sfondo del layout va nel `clear`, non in un
+                // rettangolo: come rettangolo coprirebbe l'immagine di sfondo,
+                // perche' i rettangoli si disegnano dopo.
 
                 let area_lista = layout
                     .find(&ElementKind::List)
@@ -211,7 +248,27 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     ));
                 }
 
-                graphics.clear(Color::BLACK);
+                graphics.clear(layout.screensaver.background);
+
+                // Sfondo e snapshot vanno **prima** dei rettangoli, altrimenti
+                // la cornice dello snapshot finisce sotto all'immagine.
+                if let Some(id) = sfondo {
+                    let _ = graphics.draw_texture(
+                        id,
+                        Rect::new(0.0, 0.0, schermo.0, schermo.1),
+                        Color::WHITE,
+                        false,
+                    );
+                }
+                if let Some(id) = segnaposto {
+                    if let Some(elemento) =
+                        layout.find(&ElementKind::Artwork(feel_core::ArtworkSlot::Snap))
+                    {
+                        let area = elemento.rect(screen_size(schermo));
+                        let _ = graphics.draw_texture(id, area, Color::WHITE, !elemento.stretch);
+                    }
+                }
+
                 graphics.draw_quads(&quads);
 
                 // Il testo si disegna dopo i rettangoli, altrimenti finisce

@@ -74,6 +74,14 @@ pub struct Session {
 }
 
 /// Quello che serve per disegnare.
+/// Un'immagine caricata in una texture.
+#[derive(Debug, Clone, Copy)]
+pub struct Testura {
+    id: glow::Texture,
+    pub width: u32,
+    pub height: u32,
+}
+
 pub struct Graphics {
     window: Window,
     gl: glow::Context,
@@ -87,6 +95,7 @@ pub struct Graphics {
     vao_testo: glow::VertexArray,
     vbo_testo: glow::Buffer,
     caratteri: Vec<Carattere>,
+    textures: Vec<Testura>,
     screen: (f32, f32),
 }
 
@@ -134,9 +143,10 @@ in vec4 v_colore;
 uniform sampler2D atlante;
 out vec4 colore_finale;
 void main() {
-    // L'atlante e' bianco con la copertura nell'alfa: il colore viene dal vertice.
-    float copertura = texture(atlante, v_uv).a;
-    colore_finale = vec4(v_colore.rgb, v_colore.a * copertura);
+    // Moltiplicare per il colore del vertice serve a entrambi i casi:
+    // l'atlante dei caratteri e' bianco con la copertura nell'alfa (quindi
+    // esce il colore del testo), un'immagine viene tinta dal colore.
+    colore_finale = texture(atlante, v_uv) * v_colore;
 }
 "#;
 
@@ -242,6 +252,7 @@ impl Session {
             vao_testo,
             vbo_testo,
             caratteri: Vec::new(),
+            textures: Vec::new(),
             screen: (dimensione.width as f32, dimensione.height as f32),
         };
         graphics.apply_viewport();
@@ -422,6 +433,7 @@ impl Graphics {
             return Ok(());
         };
 
+
         carattere.aggiorna(gl);
         let glifi = carattere.impagina(gl, testo).map_err(RenderError::Gl)?;
         if glifi.is_empty() {
@@ -467,29 +479,177 @@ impl Graphics {
             return Ok(());
         }
 
+        self.disegna_texturizzato(texture, &dati);
+        Ok(())
+    }
+
+    // -- immagini ---------------------------------------------------------------
+
+    /// Carica un PNG e ritorna l'indice da passare a `draw_texture`.
+    pub fn load_texture(&mut self, percorso: &std::path::Path) -> Result<usize, RenderError> {
+        let file = std::fs::File::open(percorso)
+            .map_err(|e| RenderError::Gl(format!("{}: {e}", percorso.display())))?;
+        let mut lettore = png::Decoder::new(std::io::BufReader::new(file))
+            .read_info()
+            .map_err(|e| RenderError::Gl(format!("{}: {e}", percorso.display())))?;
+
+        let mut buffer = vec![0; lettore.output_buffer_size()];
+        let info = lettore
+            .next_frame(&mut buffer)
+            .map_err(|e| RenderError::Gl(format!("{}: {e}", percorso.display())))?;
+
+        let (larghezza, altezza) = (info.width, info.height);
+
+        // OpenGL vuole RGBA: il PNG puo' arrivare in RGB, in scala di grigi o
+        // con una palette, quindi si converte qui invece di pretendere un formato.
+        let rgba = match info.color_type {
+            png::ColorType::Rgba => buffer[..info.buffer_size()].to_vec(),
+            png::ColorType::Rgb => buffer[..info.buffer_size()]
+                .chunks_exact(3)
+                .flat_map(|p| [p[0], p[1], p[2], 255])
+                .collect(),
+            png::ColorType::Grayscale => buffer[..info.buffer_size()]
+                .iter()
+                .flat_map(|g| [*g, *g, *g, 255])
+                .collect(),
+            png::ColorType::GrayscaleAlpha => buffer[..info.buffer_size()]
+                .chunks_exact(2)
+                .flat_map(|p| [p[0], p[0], p[0], p[1]])
+                .collect(),
+            altro => {
+                return Err(RenderError::Gl(format!(
+                    "{}: formato PNG non gestito ({altro:?})",
+                    percorso.display()
+                )))
+            }
+        };
+
+        let id = unsafe { self.gl.create_texture().map_err(|e| RenderError::Gl(e.to_string()))? };
         unsafe {
-            gl.use_program(Some(self.programma_testo));
-            let pos = gl.get_uniform_location(self.programma_testo, "schermo");
-            gl.uniform_2_f32(pos.as_ref(), self.screen.0, self.screen.1);
-            let unita = gl.get_uniform_location(self.programma_testo, "atlante");
-            gl.uniform_1_i32(unita.as_ref(), 0);
+            self.gl.bind_texture(glow::TEXTURE_2D, Some(id));
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+            self.gl.tex_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                glow::RGBA as i32,
+                larghezza as i32,
+                altezza as i32,
+                0,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                Some(&rgba),
+            );
+        }
 
-            gl.active_texture(glow::TEXTURE0);
-            gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+        self.textures.push(Testura { id, width: larghezza, height: altezza });
+        Ok(self.textures.len() - 1)
+    }
 
-            gl.bind_vertex_array(Some(self.vao_testo));
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo_testo));
+    pub fn texture_size(&self, indice: usize) -> Option<(u32, u32)> {
+        self.textures.get(indice).map(|t| (t.width, t.height))
+    }
+
+    /// Disegna un'immagine dentro `rect`, tinta di `tinta`.
+    ///
+    /// Se `mantieni_proporzioni` e' vero l'immagine viene centrata e ridotta
+    /// fino a entrare, invece di essere deformata.
+    pub fn draw_texture(
+        &mut self,
+        indice: usize,
+        area: Rect,
+        tinta: Color,
+        mantieni_proporzioni: bool,
+    ) -> Result<(), RenderError> {
+        let Some(testura) = self.textures.get(indice).copied() else {
+            return Ok(());
+        };
+
+        let mut rettangolo = area;
+        if mantieni_proporzioni && testura.width > 0 && testura.height > 0 {
+            let rapporto_immagine = testura.width as f32 / testura.height as f32;
+            let rapporto_area = area.width / area.height;
+            if rapporto_immagine > rapporto_area {
+                let altezza = area.width / rapporto_immagine;
+                rettangolo = Rect::new(
+                    area.x,
+                    area.y + (area.height - altezza) / 2.0,
+                    area.width,
+                    altezza,
+                );
+            } else {
+                let larghezza = area.height * rapporto_immagine;
+                rettangolo = Rect::new(
+                    area.x + (area.width - larghezza) / 2.0,
+                    area.y,
+                    larghezza,
+                    area.height,
+                );
+            }
+        }
+
+        let rgba = [
+            tinta.r as f32 / 255.0,
+            tinta.g as f32 / 255.0,
+            tinta.b as f32 / 255.0,
+            tinta.a as f32 / 255.0,
+        ];
+        let dati = vertici_texturizzati(rettangolo, [0.0, 0.0, 1.0, 1.0], rgba);
+        self.disegna_texturizzato(testura.id, &dati);
+        Ok(())
+    }
+
+    /// Il disegno vero e proprio: programma, texture, vertici.
+    fn disegna_texturizzato(&self, texture: glow::Texture, dati: &[f32]) {
+        unsafe {
+            self.gl.use_program(Some(self.programma_testo));
+            let pos = self.gl.get_uniform_location(self.programma_testo, "schermo");
+            self.gl
+                .uniform_2_f32(pos.as_ref(), self.screen.0, self.screen.1);
+            let unita = self.gl.get_uniform_location(self.programma_testo, "atlante");
+            self.gl.uniform_1_i32(unita.as_ref(), 0);
+
+            self.gl.active_texture(glow::TEXTURE0);
+            self.gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+
+            self.gl.bind_vertex_array(Some(self.vao_testo));
+            self.gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo_testo));
             let byte: &[u8] = core::slice::from_raw_parts(
                 dati.as_ptr() as *const u8,
                 dati.len() * std::mem::size_of::<f32>(),
             );
-            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, byte, glow::STREAM_DRAW);
-            gl.draw_arrays(glow::TRIANGLES, 0, (dati.len() / 8) as i32);
-            gl.bind_vertex_array(None);
+            self.gl
+                .buffer_data_u8_slice(glow::ARRAY_BUFFER, byte, glow::STREAM_DRAW);
+            self.gl
+                .draw_arrays(glow::TRIANGLES, 0, (dati.len() / 8) as i32);
+            self.gl.bind_vertex_array(None);
         }
-
-        Ok(())
     }
+}
+
+/// I sei vertici di un rettangolo texturizzato.
+fn vertici_texturizzati(rect: Rect, uv: [f32; 4], rgba: [f32; 4]) -> Vec<f32> {
+    let (x, y, w, h) = (rect.x, rect.y, rect.width, rect.height);
+    let [u0, v0, u1, v1] = uv;
+    let angoli = [
+        (x, y, u0, v0),
+        (x + w, y, u1, v0),
+        (x + w, y + h, u1, v1),
+        (x, y, u0, v0),
+        (x + w, y + h, u1, v1),
+        (x, y + h, u0, v1),
+    ];
+    let mut dati = Vec::with_capacity(48);
+    for (px, py, u, v) in angoli {
+        dati.push(px);
+        dati.push(py);
+        dati.push(u);
+        dati.push(v);
+        dati.extend_from_slice(&rgba);
+    }
+    dati
 }
 
 unsafe fn compila_programma(gl: &glow::Context) -> Result<glow::Program, RenderError> {

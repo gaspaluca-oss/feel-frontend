@@ -8,15 +8,14 @@ echo.
 echo  Frecce su/giu' per scorrere, Esc per uscire.
 echo.
 
-if not exist "%~dp0demo.sqlite" (
-    echo  Preparo la libreria...
-    "%~dp0feel.exe" import "%~dp0demo" --db "%~dp0demo.sqlite" >nul
-)
+REM Importazione e conversione sono idempotenti e veloci: si rifanno sempre,
+REM cosi' un pacchetto aggiornato non lascia in giro un layout vecchio senza
+REM le immagini.
+echo  Preparo la libreria...
+"%~dp0feel.exe" import "%~dp0demo" --db "%~dp0demo.sqlite" >nul
 
-if not exist "%~dp0layout\MAME.json" (
-    echo  Converto il layout...
-    "%~dp0feel.exe" layout "%~dp0demo" --out "%~dp0layout" >nul
-)
+echo  Converto il layout...
+"%~dp0feel.exe" layout "%~dp0demo" --out "%~dp0layout" >nul
 
 echo  Avvio...
 echo.

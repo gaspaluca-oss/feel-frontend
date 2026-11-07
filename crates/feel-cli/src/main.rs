@@ -378,7 +378,23 @@ fn comando_layout(args: &[String]) -> Result<(), Box<dyn Error>> {
                 println!("  --dry-run: non scrivo {}", destinazione.display());
             } else {
                 std::fs::write(&destinazione, serde_json::to_string_pretty(&layout)?)?;
-                println!("  scritto       {}", destinazione.display());
+
+                // Le immagini vanno copiate accanto al JSON: il frontend le
+                // cerca nella stessa cartella, e senza questo si vedrebbe un
+                // layout giusto con tutto nero al posto delle figure.
+                let mut copiate = 0;
+                for asset in &layout.assets {
+                    let da = percorso.join(asset);
+                    if da.is_file() {
+                        std::fs::copy(&da, dir.join(asset))?;
+                        copiate += 1;
+                    }
+                }
+
+                println!(
+                    "  scritto       {} (+ {copiate} immagini)",
+                    destinazione.display()
+                );
             }
         }
     }
