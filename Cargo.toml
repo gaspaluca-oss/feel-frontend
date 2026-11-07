@@ -6,6 +6,8 @@ members = [
     "crates/feel-db",
     "crates/feel-launch",
     "crates/feel-cli",
+    "crates/feel-render",
+    "crates/feel-app",
 ]
 
 [workspace.package]

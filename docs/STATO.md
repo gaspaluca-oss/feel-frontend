@@ -58,6 +58,8 @@ Il **motore**, cioè tutto quello che non disegna. 84 test, zero avvisi.
 | `feel-db` | libreria su SQLite, con statistiche e migrazioni |
 | `feel-launch` | costruzione del piano di avvio ed esecuzione dell'emulatore |
 | `feel-cli` | il binario `feel`: import, info, list, launch, layout |
+| `feel-render` | finestra, contesto OpenGL 3.3, disegno di rettangoli |
+| `feel-app` | binario grafico: mostra la lista dei giochi dal database |
 
 Verificato end-to-end su una installazione FEEL 1.x di esempio: importa 3 giochi,
 converte il layout, avvia un emulatore e registra il tempo di gioco.
@@ -69,20 +71,26 @@ emulatore simulato, così si vede il ciclo completo senza avere MAME installato.
 
 ## 3. Cosa manca
 
-**Tutto il rendering.** È l'unico pezzo grosso rimasto, ed è quello che trasforma
-questo motore in un frontend che si vede.
+La **finestra** c'è: `feel-app` apre OpenGL 3.3, legge la libreria dal database e
+disegna la lista secondo il layout convertito. Frecce per scorrere, Esc per uscire.
 
-Crate da scrivere, secondo `docs/ARCHITETTURA.md` §3:
+Manca, in ordine di importanza:
 
-- `feel-render` — OpenGL 3.3, finestra, shader, testo, schermate
-- `feel-input` — winit + gilrs: tastiera, gamepad, mappatura controlli
-- `feel-media` — FFmpeg: video snap e immagini
-- `feel-platform` — le differenze fra sistemi: cambio risoluzione, LED
-- `feel-app` — il binario grafico che mette insieme tutto
+- **il testo** — adesso le righe sono barre colorate, non titoli. Serve un
+  rasterizzatore di font (`ab_glyph`) e un atlante di glifi;
+- **le immagini** — sfondo del layout, snapshot, marquee;
+- **gli shader CRT** — è la ragione per cui il renderer è OpenGL;
+- `feel-input` — gilrs per i gamepad, la mappatura controlli;
+- `feel-media` — FFmpeg per i video snap;
+- `feel-platform` — cambio risoluzione, LED.
 
-Ordine consigliato: **`feel-render` + `feel-app` per primi**, con una finestra che
-mostra la lista dei giochi presa dal database. È la fetta verticale: se quella
-regge, il resto è lavoro; se non regge, si scopre subito.
+Prova rapida:
+
+```bash
+feel import packaging/demo --db demo.sqlite
+feel layout packaging/demo --out layout
+feel-app demo.sqlite mame-0 layout/MAME.json
+```
 
 ---
 
@@ -106,6 +114,18 @@ percorsi come `.../roms\pacman.zip`: funzionanti ma illeggibili nei log.
 **Le statistiche sono per `(piattaforma, emulatore)`**, non per solo emulatore.
 FEEL 1.x le scrive in un unico `data/<emu>.sts`, quindi due piattaforme con un
 emulatore omonimo si scambiavano le partite.
+
+**Le dipendenze recenti non si lasciano compilare da Cargo 1.77.** `jobserver`
+0.1.35 tira dentro `getrandom` 0.4.3, che usa `edition2024`: Cargo 1.77 non sa
+nemmeno leggere il suo manifest, e l'errore parla di "failed to download
+replaced source registry", che non c'entra niente. Va fissato:
+
+```bash
+cargo update -p jobserver --precise 0.1.32
+cargo update -p unicode-segmentation --precise 1.10.1
+```
+
+Le versioni sono già nel `Cargo.lock` committato: servono solo se si rigenera.
 
 **Il formato `.lst` di FEEL 1.x ha 13 campi**, non 13 righe: nome, titolo, anno,
 produttore, clone di, bios, dati extra, orientamento, comandi, stato, colore,

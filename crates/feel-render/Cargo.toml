@@ -1,0 +1,17 @@
+[package]
+name = "feel-render"
+description = "Backend grafico di FEEL 2.0: finestra, contesto OpenGL, disegno."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+feel-core = { path = "../feel-core" }
+thiserror.workspace = true
+glow = "0.13"
+glutin = "0.31"
+glutin-winit = "0.4"
+raw-window-handle = "0.5"
+winit = "0.29"

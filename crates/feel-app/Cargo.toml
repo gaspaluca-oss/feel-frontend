@@ -1,0 +1,19 @@
+[package]
+name = "feel-app"
+description = "Il frontend grafico di FEEL 2.0."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "feel-app"
+path = "src/main.rs"
+
+[dependencies]
+feel-core = { path = "../feel-core" }
+feel-db = { path = "../feel-db" }
+feel-render = { path = "../feel-render" }
+serde_json = "1"
+winit = "0.29"
