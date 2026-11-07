@@ -347,6 +347,7 @@ dependencies = [
  "feel-config",
  "feel-core",
  "feel-db",
+ "feel-launch",
  "feel-render",
  "serde_json",
  "winit",

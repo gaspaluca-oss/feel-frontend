@@ -84,6 +84,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|lista| libreria.emulator(&lista.platform, &lista.emulator))
         .and_then(|emulatore| emulatore.artwork.snapshot.clone());
 
+    // L'emulatore serve sia per la cartella degli snapshot sia per avviare i
+    // giochi: lo teniamo da parte invece di ricercarlo ogni volta.
+    let emulatore = libreria
+        .gamelist(&chiave)
+        .and_then(|lista| libreria.emulator(&lista.platform, &lista.emulator))
+        .cloned();
+
     let mut giochi = db.games_of(&chiave)?;
     let totale = giochi.len();
     if totale == 0 {
@@ -184,6 +191,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
                     if Some(codice) == tasto(&impostazioni.input.back) {
                         controllo.exit();
+                    } else if Some(codice) == tasto(&impostazioni.input.select) {
+                        // Avvio del gioco: qui il frontend si ferma e aspetta
+                        // l'emulatore, che e' esattamente cosa deve succedere.
+                        if let (Some(emulatore), Some(gioco)) =
+                            (emulatore.as_ref(), giochi.get(scelta))
+                        {
+                            match avvia_gioco(emulatore, gioco, &database) {
+                                Ok(durata) => println!(
+                                    "Tornato al frontend dopo {:.0} secondi.",
+                                    durata.as_secs_f64()
+                                ),
+                                Err(err) => eprintln!("non riesco ad avviare: {err}"),
+                            }
+                            graphics.window().request_redraw();
+                        }
                     } else if Some(codice) == tasto(&impostazioni.input.down) {
                         if scelta + 1 < totale {
                             scelta += 1;
@@ -401,6 +423,51 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     Ok(())
+}
+
+/// Avvia il gioco e registra il tempo passato.
+///
+/// Blocca finché l'emulatore non esce: e' voluto. Un frontend che continua a
+/// disegnare mentre l'emulatore gira si contende la scheda video con il gioco.
+fn avvia_gioco(
+    emulatore: &feel_core::Emulator,
+    gioco: &feel_core::Game,
+    percorso_db: &std::path::Path,
+) -> Result<std::time::Duration, Box<dyn std::error::Error>> {
+    let piano = feel_launch::LaunchPlan::resolve(emulatore, gioco);
+
+    println!();
+    println!("Avvio: {}", gioco.title);
+    println!("  {}", piano.command_line().join(" "));
+    if !piano.rom_found {
+        println!("  (la rom non e' dove la cerchiamo: potrebbe essere normale)");
+    }
+
+    let esito = piano.run()?;
+    let durata = esito.duration();
+
+    if !esito.success() {
+        println!("  uscito con codice {:?}", esito.status.code());
+    }
+
+    // Registrare la partita non deve far fallire il ritorno al frontend: se il
+    // database e' occupato o in sola lettura, il gioco e' comunque finito.
+    match Database::open(percorso_db) {
+        Ok(db) => {
+            let riferimento = (emulatore.platform.clone(), emulatore.key.clone());
+            if let Err(err) = db.record_play(
+                &riferimento,
+                &gioco.key,
+                durata,
+                feel_core::Timestamp::now(),
+            ) {
+                eprintln!("  non ho potuto registrare la partita: {err}");
+            }
+        }
+        Err(err) => eprintln!("  non ho potuto riaprire il database: {err}"),
+    }
+
+    Ok(durata)
 }
 
 /// Cerca l'immagine di un gioco nella cartella degli snapshot.

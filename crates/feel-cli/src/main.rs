@@ -152,6 +152,21 @@ fn comando_import(args: &[String]) -> Result<(), Box<dyn Error>> {
     let mut db = Database::open(&db_path)?;
     db.store_library(&import.library)?;
 
+    // Se non c'e' ancora un file di impostazioni, lo creiamo da quelli di
+    // FEEL 1.x. Chi migra ritrova volumi, screensaver, rotazione e tasti senza
+    // doverli riconfigurare: e' la differenza fra "reimporta tutto" e
+    // "funziona come prima".
+    let percorso_impostazioni = db_path.with_file_name("feel.json");
+    if !percorso_impostazioni.exists() {
+        let mut impostazioni = feel_config::Settings::default();
+        applica_impostazioni_feel1(&mut impostazioni, &import.settings);
+        impostazioni.save(&percorso_impostazioni)?;
+        println!(
+            "Impostazioni create da FEEL 1.x: {}",
+            percorso_impostazioni.display()
+        );
+    }
+
     println!("\nDatabase scritto in: {}", db_path.display());
     let conta = db.counts()?;
     println!(
@@ -552,6 +567,64 @@ fn descrivi_area(layout: &feel_core::Layout, elemento: &Element) -> String {
 // ----------------------------------------------------------------------------------
 // utilita'
 // ----------------------------------------------------------------------------------
+
+/// Porta nelle impostazioni di FEEL 2.0 quello che FEEL 1.x aveva gia'.
+///
+/// Solo le cose che hanno un equivalente: il resto (per esempio i percorsi dei
+/// video) vive gia' nel database, per emulatore.
+fn applica_impostazioni_feel1(
+    destinazione: &mut feel_config::Settings,
+    origine: &feel_config::Feel1Settings,
+) {
+    destinazione.video.rotate = if origine.rotate_screen {
+        feel_config::Rotate::Left
+    } else {
+        feel_config::Rotate::None
+    };
+
+    destinazione.screensaver.enabled = origine.screen_saver_enabled;
+    destinazione.screensaver.delay_secs = origine.screen_saver_delay_secs;
+    destinazione.screensaver.slide_secs = origine.screen_saver_slide_secs;
+
+    destinazione.audio.effects = origine.sound_volume.min(100) as u8;
+    destinazione.audio.music = origine.music_volume.min(100) as u8;
+    destinazione.audio.video = origine.video_volume.min(100) as u8;
+
+    // Comando di FEEL 1.x -> campo della nuova mappatura.
+    let corrispondenze = [
+        ("menu_up", "up"),
+        ("menu_down", "down"),
+        ("menu_left", "left"),
+        ("menu_right", "right"),
+        ("menu_ok", "select"),
+        ("show_exit_menu", "back"),
+        ("previous_page", "page_up"),
+        ("next_page", "page_down"),
+    ];
+
+    for (comando, campo) in corrispondenze {
+        let Some(tasto) = origine.keymap.get(comando) else {
+            continue;
+        };
+        let destinazione_campo = match campo {
+            "up" => &mut destinazione.input.up,
+            "down" => &mut destinazione.input.down,
+            "left" => &mut destinazione.input.left,
+            "right" => &mut destinazione.input.right,
+            "select" => &mut destinazione.input.select,
+            "back" => &mut destinazione.input.back,
+            "page_up" => &mut destinazione.input.page_up,
+            "page_down" => &mut destinazione.input.page_down,
+            _ => continue,
+        };
+        *destinazione_campo = tasto.clone();
+    }
+
+    destinazione.layout = origine
+        .default_layout
+        .as_ref()
+        .map(|layout| layout.as_str().to_owned());
+}
 
 fn prossimo<'a>(args: &'a [String], index: &mut usize, opzione: &str) -> Result<&'a str, Box<dyn Error>> {
     *index += 1;
