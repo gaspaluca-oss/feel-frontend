@@ -14,6 +14,7 @@ pub mod text;
 
 pub use layout::{
     Anchor, ArtworkSlot, Background, Color, Dimension, Element, ElementKind, Frame, Horizontal,
+    indice_frame,
     LabelKind, Layout, MenuStyle, Placement, Point, Rect, ScreenSaverStyle, ScreenSize, Shader,
     Size, TextStyle, Vertical, LAYOUT_VERSION,
 };

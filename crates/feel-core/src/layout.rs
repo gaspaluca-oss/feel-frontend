@@ -20,6 +20,8 @@
 //! Le misure sono **frazioni** (0.5 = meta') e non percentuali: una percentuale
 //! si dimentica di dividere per cento prima o poi, una frazione no.
 
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 
 /// Dove si aggancia un elemento orizzontalmente.
@@ -433,6 +435,13 @@ pub struct Element {
     /// Se lo sfondo va disegnato dietro al testo.
     #[serde(default)]
     pub row_background: bool,
+    /// Fotogrammi, per le immagini animate.
+    ///
+    /// Vuoto significa "non c'e' un'immagine fissa": lo snapshot lo sceglie
+    /// il frontend in base al gioco. Un solo fotogramma con `duration_ms` a
+    /// zero e' un'immagine ferma.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frames: Vec<Frame>,
 }
 
 fn yes() -> bool {
@@ -449,7 +458,17 @@ impl Element {
             style: None,
             stretch: false,
             row_background: false,
+            frames: Vec::new(),
         }
+    }
+
+    /// Il fotogramma da mostrare dopo `trascorso`, se l'elemento e' animato.
+    pub fn frame_a(&self, trascorso: Duration) -> Option<&Frame> {
+        if self.frames.is_empty() {
+            return None;
+        }
+        let indice = indice_frame(&self.frames, trascorso, None);
+        self.frames.get(indice)
     }
 
     /// Il rettangolo in pixel di questo elemento.
@@ -466,7 +485,38 @@ impl Element {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Frame {
     pub image: String,
+    /// Quanto resta a video. Zero significa immagine ferma.
     pub duration_ms: u32,
+}
+
+/// Il fotogramma da mostrare dopo un certo tempo.
+///
+/// `pausa_ms` e' l'attesa prima di ricominciare il ciclo: durante la pausa
+/// resta visibile l'ultimo fotogramma, come faceva FEEL 1.x con
+/// `repeat_delay_ms`.
+pub fn indice_frame(frames: &[Frame], trascorso: Duration, pausa_ms: Option<u32>) -> usize {
+    if frames.is_empty() {
+        return 0;
+    }
+
+    let durata_ciclo: u64 = frames
+        .iter()
+        .map(|frame| frame.duration_ms.max(1) as u64)
+        .sum();
+    let pausa = pausa_ms.unwrap_or(0) as u64;
+    let totale = (durata_ciclo + pausa).max(1);
+
+    let mut residuo = trascorso.as_millis() as u64 % totale;
+    for (indice, frame) in frames.iter().enumerate() {
+        let durata = frame.duration_ms.max(1) as u64;
+        if residuo < durata {
+            return indice;
+        }
+        residuo -= durata;
+    }
+
+    // Siamo nella pausa fra un ciclo e l'altro: resta l'ultimo.
+    frames.len() - 1
 }
 
 /// Lo sfondo del layout.

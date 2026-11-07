@@ -150,12 +150,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let sfondo = layout
-        .background
-        .as_ref()
-        .and_then(|fondo| fondo.image.as_deref())
-        .and_then(&mut carica);
-
     // Immagine di ripiego quando un gioco non ha la sua: e' quella che FEEL 1.x
     // disegna dentro il riquadro dello snapshot.
     let segnaposto = carica("snap.png");
@@ -191,6 +185,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // fotogramma sarebbe uno spreco e farebbe scattare il disco sessanta
     // volte al secondo.
     let mut immagine_gioco: Option<(usize, Option<usize>)> = None;
+
+    // Cache delle immagini del layout: uno sfondo animato cambia fotogramma,
+    // non ricarica il file.
+    let mut cache: std::collections::HashMap<PathBuf, usize> = std::collections::HashMap::new();
 
     event_loop.run(move |event, controllo| {
         controllo.set_control_flow(winit::event_loop::ControlFlow::Wait);
@@ -415,13 +413,30 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Sfondo e snapshot vanno **prima** dei rettangoli, altrimenti
                 // la cornice dello snapshot finisce sotto all'immagine.
-                if let Some(id) = sfondo {
-                    let _ = graphics.draw_texture(
-                        id,
-                        Rect::new(0.0, 0.0, schermo.0, schermo.1),
-                        Color::WHITE,
-                        false,
-                    );
+                if let Some(fondo) = &layout.background {
+                    let immagine = if fondo.frames.is_empty() {
+                        fondo.image.clone()
+                    } else {
+                        let indice = feel_core::indice_frame(
+                            &fondo.frames,
+                            avvio.elapsed(),
+                            fondo.repeat_delay_ms,
+                        );
+                        Some(fondo.frames[indice].image.clone())
+                    };
+
+                    if let Some(nome) = immagine {
+                        if let Some(id) =
+                            texture_di(&mut graphics, &mut cache, &cartella_layout.join(&nome))
+                        {
+                            let _ = graphics.draw_texture(
+                                id,
+                                Rect::new(0.0, 0.0, schermo.0, schermo.1),
+                                Color::WHITE,
+                                false,
+                            );
+                        }
+                    }
                 }
                 // Immagine del gioco selezionato, se esiste; altrimenti il
                 // segnaposto del layout.
@@ -495,6 +510,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
+                // Bezel e attori stanno sopra a tutto: sono la cornice del
+                // monitor e le figure che escono dallo schermo.
+                disegna_livelli(
+                    &mut graphics,
+                    &mut cache,
+                    &layout,
+                    &cartella_layout,
+                    avvio.elapsed(),
+                    schermo,
+                );
+
                 // La schermata delle impostazioni si disegna sopra a tutto,
                 // dentro la scena, cosi' prende anche lei l'effetto CRT.
                 if modalita == Modalita::Impostazioni {
@@ -534,6 +560,60 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     Ok(())
+}
+
+/// Una texture dalla cache, caricandola la prima volta.
+fn texture_di(
+    graphics: &mut feel_render::Graphics,
+    cache: &mut std::collections::HashMap<PathBuf, usize>,
+    percorso: &std::path::Path,
+) -> Option<usize> {
+    if let Some(id) = cache.get(percorso) {
+        return Some(*id);
+    }
+    match graphics.load_texture(percorso) {
+        Ok(id) => {
+            cache.insert(percorso.to_path_buf(), id);
+            Some(id)
+        }
+        Err(err) => {
+            eprintln!("immagine {}: {err}", percorso.display());
+            None
+        }
+    }
+}
+
+/// Disegna gli elementi che stanno sopra allo schermo: bezel e attori.
+///
+/// Sono gli unici che FEEL 1.x stende a tutto schermo senza coordinate proprie,
+/// e possono essere animati come lo sfondo.
+fn disegna_livelli(
+    graphics: &mut feel_render::Graphics,
+    cache: &mut std::collections::HashMap<PathBuf, usize>,
+    layout: &Layout,
+    cartella: &std::path::Path,
+    trascorso: std::time::Duration,
+    schermo: (f32, f32),
+) {
+    for elemento in layout.visible_elements() {
+        let sopra = matches!(
+            elemento.kind,
+            ElementKind::Artwork(feel_core::ArtworkSlot::Bezel)
+                | ElementKind::Artwork(feel_core::ArtworkSlot::Actors)
+        );
+        if !sopra {
+            continue;
+        }
+
+        let Some(fotogramma) = elemento.frame_a(trascorso) else {
+            continue;
+        };
+
+        if let Some(id) = texture_di(graphics, cache, &cartella.join(&fotogramma.image)) {
+            let area = elemento.rect(screen_size(schermo));
+            let _ = graphics.draw_texture(id, area, Color::WHITE, !elemento.stretch);
+        }
+    }
 }
 
 /// Avvia il gioco e registra il tempo passato.

@@ -73,20 +73,22 @@ pub fn convert(name: &str, ini: &IniMap, files: &[String]) -> Layout {
     }
 
     // Bezel e attori non hanno coordinate: in FEEL 1.x si stendono su tutto lo
-    // schermo, sopra al resto.
-    for (slot, file) in [
-        (ArtworkSlot::Bezel, "bezel.png"),
-        (ArtworkSlot::Actors, "actors.png"),
-    ] {
-        if files.iter().any(|presente| presente == file) {
-            let mut element = Element::new(
-                ElementKind::Artwork(slot),
-                Placement::default(),
-                Size::fractions(1.0, 1.0),
-            );
-            element.stretch = true;
-            layout.elements.push(element);
+    // schermo, sopra al resto, e possono essere animati.
+    for (slot, gambo) in [(ArtworkSlot::Bezel, "bezel"), (ArtworkSlot::Actors, "actors")] {
+        let durata = ini.int(&format!("{gambo}_frame_duration_ms"), 200).max(1) as u32;
+        let fotogrammi = raccogli_frames(gambo, files, durata);
+        if fotogrammi.is_empty() {
+            continue;
         }
+
+        let mut element = Element::new(
+            ElementKind::Artwork(slot),
+            Placement::default(),
+            Size::fractions(1.0, 1.0),
+        );
+        element.stretch = true;
+        element.frames = fotogrammi;
+        layout.elements.push(element);
     }
 
     layout
@@ -252,37 +254,56 @@ fn read_text_style(ini: &IniMap, screen: ScreenSize, prefix: &str) -> TextStyle 
 }
 
 fn read_background(ini: &IniMap, files: &[String]) -> Option<Background> {
-    let has = |name: &str| files.iter().any(|presente| presente == name);
-
     let mut background = Background::default();
 
     // I fotogrammi animati: `main1.png`, `main2.png`, ...
-    let mut frames: Vec<Frame> = Vec::new();
     let duration = ini.int("background_frame_duration_ms", 200).max(1) as u32;
-    for index in 1..=50 {
-        let name = format!("main{index}.png");
-        if !has(&name) {
-            break;
-        }
-        frames.push(Frame { image: name, duration_ms: duration });
-    }
+    let frames = raccogli_frames("main", files, duration);
 
     if frames.is_empty() {
-        if has("main.png") {
-            background.image = Some("main.png".to_owned());
-        } else {
-            return None;
-        }
+        return None;
+    }
+
+    // Un fotogramma solo di durata zero e' un'immagine ferma.
+    if frames.len() == 1 && frames[0].duration_ms == 0 {
+        background.image = Some(frames[0].image.clone());
     } else {
-        background.frames = frames;
         let repeat = ini.int("background_repeat_delay_ms", 0);
         if repeat > 0 {
             background.repeat_delay_ms = Some(repeat as u32);
         }
+        background.frames = frames;
     }
 
     background.on_top = ini.flag("background_ontop", false);
     Some(background)
+}
+
+/// I fotogrammi di un'immagine, animata o ferma.
+///
+/// FEEL 1.x anima `bezel`, `actors` e `main` con una serie `nome1.png`,
+/// `nome2.png`, ... Quando la serie non c'e' usa `nome.png` come immagine
+/// ferma: la rappresentiamo come un fotogramma di durata zero, cosi' chi
+/// disegna ha un solo caso da gestire.
+fn raccogli_frames(gambo: &str, files: &[String], durata_ms: u32) -> Vec<Frame> {
+    let mut animati = Vec::new();
+    for indice in 1..=50 {
+        let nome = format!("{gambo}{indice}.png");
+        if !files.iter().any(|presente| presente == &nome) {
+            break;
+        }
+        animati.push(Frame { image: nome, duration_ms: durata_ms });
+    }
+    if !animati.is_empty() {
+        return animati;
+    }
+
+    let fermo = format!("{gambo}.png");
+    if files.iter().any(|presente| presente == &fermo) {
+        return vec![Frame { image: fermo, duration_ms: 0 }];
+    }
+
+    Vec::new()
 }
 
 fn read_menu(ini: &IniMap, screen: ScreenSize) -> MenuStyle {
