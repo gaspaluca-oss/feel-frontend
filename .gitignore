@@ -28,3 +28,10 @@ desktop.ini
 # Fotogrammi di prova
 *.bmp
 /_layout/
+
+# Impostazioni dell'utente e artefatti di prova
+/feel.json
+/_feel.json
+/_layout/
+/_pkg_layout/
+/_scatto.bmp
