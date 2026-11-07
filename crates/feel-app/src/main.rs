@@ -35,6 +35,16 @@ fn main() -> ExitCode {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
 
+    // `--screenshot FILE.bmp` salva un fotogramma ed esce: serve a verificare
+    // cosa si vede senza dover guardare lo schermo.
+    let mut scatto: Option<PathBuf> = None;
+    if let Some(posizione) = args.iter().position(|a| a == "--screenshot") {
+        if let Some(valore) = args.get(posizione + 1) {
+            scatto = Some(PathBuf::from(valore));
+        }
+        args.drain(posizione..=(posizione + 1).min(args.len() - 1));
+    }
+
     // `--auto-exit N` chiude da solo dopo N secondi: serve alle prove
     // automatiche, dove una finestra che aspetta un tasto blocca tutto.
     let mut auto_exit: Option<Duration> = None;
@@ -75,6 +85,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut scelta = 0usize;
     let mut primo_visibile = 0usize;
+    let mut font: Option<usize> = None;
+    let mut scatto_fatto = false;
     let avvio = Instant::now();
 
     event_loop.run(move |event, controllo| {
@@ -163,12 +175,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     .unwrap_or(Color::rgb(150, 200, 50));
                 let sfondo_scelto = Color::rgb(196, 128, 196);
 
-                for (indice, _gioco) in giochi
-                    .iter()
-                    .enumerate()
-                    .skip(primo_visibile)
-                    .take(righe_visibili)
-                {
+                // Righe visibili: prima i rettangoli, poi i testi sopra.
+                let mut righe: Vec<(Rect, usize)> = Vec::new();
+                let ultima = (primo_visibile + righe_visibili).min(totale);
+                for indice in primo_visibile..ultima {
                     let y = area_lista.y + (indice - primo_visibile) as f32 * altezza_riga;
                     let riga = Rect::new(
                         area_lista.x + 2.0,
@@ -176,22 +186,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         area_lista.width - 4.0,
                         altezza_riga - 1.0,
                     );
-
                     if indice == scelta {
                         quads.push(Quad::new(riga, sfondo_scelto));
-                    } else {
-                        // Una barra che occupa una frazione della riga: senza
-                        // testo, e' quello che rende visibile la lunghezza del
-                        // titolo. Sparisce quando ci sara' il testo vero.
-                        let lunghezza = 0.35 + ((indice * 37) % 55) as f32 / 100.0;
-                        let barra = Rect::new(
-                            riga.x + 2.0,
-                            riga.y + riga.height * 0.25,
-                            (riga.width - 8.0) * lunghezza.min(1.0),
-                            riga.height * 0.5,
-                        );
-                        quads.push(Quad::new(barra, colore_testo));
                     }
+                    righe.push((riga, indice));
                 }
 
                 // Area dello snapshot: solo il contorno, per far vedere dove
@@ -215,7 +213,69 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
                 graphics.clear(Color::BLACK);
                 graphics.draw_quads(&quads);
+
+                // Il testo si disegna dopo i rettangoli, altrimenti finisce
+                // sotto alla selezione.
+                let pixel = altezza_carattere.max(9.0);
+                if font.map_or(true, |id| {
+                    (graphics.line_height(id) / 1.25 - pixel).abs() > 1.0
+                }) {
+                    font = carica_font(&mut graphics, pixel);
+                }
+
+                if let Some(id) = font {
+                    let colore_scelto = contrasto(sfondo_scelto);
+                    for (riga, indice) in &righe {
+                        let colore = if *indice == scelta { colore_scelto } else { colore_testo };
+                        let titolo = &giochi[*indice].title;
+                        let y = riga.y + (riga.height - pixel) / 2.0;
+                        let _ = graphics.draw_text(id, titolo, (riga.x + 6.0, y), colore);
+                    }
+
+                    // Contatore e nome della lista, se il layout li prevede.
+                    if let Some(elemento) =
+                        layout.find(&ElementKind::Label(feel_core::LabelKind::RomCounter))
+                    {
+                        let area = elemento.rect(screen_size(schermo));
+                        let testo = format!("{} / {totale}", scelta + 1);
+                        let colore = elemento
+                            .style
+                            .as_ref()
+                            .map(|s| s.color)
+                            .unwrap_or(Color::rgb(255, 128, 0));
+                        let _ = graphics.draw_text(id, &testo, (area.x, area.y), colore);
+                    }
+
+                    if let Some(elemento) =
+                        layout.find(&ElementKind::Label(feel_core::LabelKind::Gamelist))
+                    {
+                        let area = elemento.rect(screen_size(schermo));
+                        let colore = elemento
+                            .style
+                            .as_ref()
+                            .map(|s| s.color)
+                            .unwrap_or(Color::rgb(128, 192, 192));
+                        let _ = graphics.draw_text(id, nome_lista, (area.x, area.y), colore);
+                    }
+                }
+
                 graphics.present();
+
+                // Cattura del fotogramma, per verificare cosa si vede davvero
+                // senza dover guardare lo schermo.
+                if let Some(percorso) = &scatto {
+                    if !scatto_fatto {
+                        let (larghezza, altezza) = graphics.screen();
+                        let pixel = graphics.read_pixels();
+                        match scrivi_bmp(percorso, larghezza as u32, altezza as u32, &pixel) {
+                            Ok(()) => println!("Fotogramma salvato: {}", percorso.display()),
+                            Err(err) => eprintln!("non riesco a salvare {}: {err}", percorso.display()),
+                        }
+                        scatto_fatto = true;
+                        controllo.exit();
+                        return;
+                    }
+                }
             }
             _ => {}
         }
@@ -226,4 +286,100 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 fn screen_size(schermo: (f32, f32)) -> feel_core::ScreenSize {
     feel_core::ScreenSize::new(schermo.0, schermo.1)
+}
+
+/// Dove cercare un font, in ordine di preferenza.
+///
+/// Non ne includiamo uno nostro: sarebbe un file binario da versionare e una
+/// licenza da verificare. I font di sistema bastano, e su Windows e sulle
+/// Debian/Ubuntu ce n'e' sempre almeno uno di questi.
+const FONT_CANDIDATI: [&str; 8] = [
+    r"C:\Windows\Fonts\consola.ttf",
+    r"C:\Windows\Fonts\segoeui.ttf",
+    r"C:\Windows\Fonts\arial.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
+];
+
+/// Scrive un BMP a 24 bit non compresso.
+///
+/// BMP e non PNG perche' il formato non richiede nessuna libreria: quaranta
+/// righe di intestazione e i pixel. Serve solo a guardare un fotogramma.
+fn scrivi_bmp(
+    percorso: &std::path::Path,
+    larghezza: u32,
+    altezza: u32,
+    rgba: &[u8],
+) -> std::io::Result<()> {
+    let imbottitura = ((4 - (larghezza as usize * 3) % 4) % 4) as usize;
+    let riga_byte = larghezza as usize * 3 + imbottitura;
+    let dimensione_immagine = riga_byte * altezza as usize;
+    let dimensione_file = 54 + dimensione_immagine;
+
+    let mut out = Vec::with_capacity(dimensione_file);
+    out.extend_from_slice(b"BM");
+    out.extend_from_slice(&(dimensione_file as u32).to_le_bytes());
+    out.extend_from_slice(&[0u8; 4]);
+    out.extend_from_slice(&54u32.to_le_bytes());
+    out.extend_from_slice(&40u32.to_le_bytes());
+    out.extend_from_slice(&(larghezza as i32).to_le_bytes());
+    // Altezza positiva: il BMP conserva le righe dal basso verso l'alto, come
+    // arrivano da OpenGL, quindi non serve ribaltare niente.
+    out.extend_from_slice(&(altezza as i32).to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&24u16.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&(dimensione_immagine as u32).to_le_bytes());
+    out.extend_from_slice(&2835u32.to_le_bytes());
+    out.extend_from_slice(&2835u32.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+
+    for y in 0..altezza {
+        for x in 0..larghezza {
+            let i = ((y * larghezza + x) * 4) as usize;
+            out.push(rgba[i + 2]);
+            out.push(rgba[i + 1]);
+            out.push(rgba[i]);
+        }
+        out.extend(std::iter::repeat(0).take(imbottitura));
+    }
+
+    std::fs::write(percorso, out)
+}
+
+fn carica_font(graphics: &mut feel_render::Graphics, pixel: f32) -> Option<usize> {
+    for percorso in FONT_CANDIDATI {
+        let p = std::path::Path::new(percorso);
+        if !p.is_file() {
+            continue;
+        }
+        match graphics.load_font(p, pixel) {
+            Ok(id) => {
+                println!("Font   : {percorso} a {pixel:.0} px");
+                return Some(id);
+            }
+            Err(err) => eprintln!("font {percorso}: {err}"),
+        }
+    }
+    eprintln!("Nessun font di sistema trovato: il testo non verra' disegnato.");
+    None
+}
+
+/// Un colore leggibile sopra `sfondo`.
+///
+/// La luminosita' e' quella percepita, non la media dei canali: il verde pesa
+/// molto piu' del blu, ed e' il motivo per cui un testo bianco su giallo e' piu'
+/// leggibile di un testo bianco su blu.
+fn contrasto(sfondo: Color) -> Color {
+    let luminosita =
+        0.299 * sfondo.r as f32 + 0.587 * sfondo.g as f32 + 0.114 * sfondo.b as f32;
+    if luminosita > 140.0 {
+        Color::rgb(16, 12, 16)
+    } else {
+        Color::rgb(245, 245, 245)
+    }
 }

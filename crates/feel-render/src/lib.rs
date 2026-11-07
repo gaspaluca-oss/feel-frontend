@@ -30,6 +30,10 @@ use thiserror::Error;
 use winit::event_loop::EventLoop;
 use winit::window::{Window, WindowBuilder};
 
+mod text;
+
+pub use text::{Carattere, Glifo};
+
 /// Un rettangolo colorato da disegnare.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Quad {
@@ -78,6 +82,11 @@ pub struct Graphics {
     program: glow::Program,
     vertex_array: glow::VertexArray,
     vertices: glow::Buffer,
+    /// Programma per i rettangoli texturizzati (testo).
+    programma_testo: glow::Program,
+    vao_testo: glow::VertexArray,
+    vbo_testo: glow::Buffer,
+    caratteri: Vec<Carattere>,
     screen: (f32, f32),
 }
 
@@ -100,6 +109,34 @@ in vec4 v_colore;
 out vec4 colore_finale;
 void main() {
     colore_finale = v_colore;
+}
+"#;
+
+const TESTO_VERTICE: &str = r#"#version 330 core
+layout(location = 0) in vec2 posizione;
+layout(location = 1) in vec2 uv;
+layout(location = 2) in vec4 colore;
+uniform vec2 schermo;
+out vec2 v_uv;
+out vec4 v_colore;
+void main() {
+    vec2 n = vec2(posizione.x / schermo.x * 2.0 - 1.0,
+                  1.0 - posizione.y / schermo.y * 2.0);
+    gl_Position = vec4(n, 0.0, 1.0);
+    v_uv = uv;
+    v_colore = colore;
+}
+"#;
+
+const TESTO_FRAMMENTO: &str = r#"#version 330 core
+in vec2 v_uv;
+in vec4 v_colore;
+uniform sampler2D atlante;
+out vec4 colore_finale;
+void main() {
+    // L'atlante e' bianco con la copertura nell'alfa: il colore viene dal vertice.
+    float copertura = texture(atlante, v_uv).a;
+    colore_finale = vec4(v_colore.rgb, v_colore.a * copertura);
 }
 "#;
 
@@ -157,6 +194,28 @@ impl Session {
         };
         let vertices = unsafe { gl.create_buffer().map_err(|e| RenderError::Gl(e.to_string()))? };
 
+        let programma_testo = unsafe { compila_programma_da(&gl, TESTO_VERTICE, TESTO_FRAMMENTO)? };
+        let vao_testo = unsafe { gl.create_vertex_array().map_err(|e| RenderError::Gl(e.to_string()))? };
+        let vbo_testo = unsafe { gl.create_buffer().map_err(|e| RenderError::Gl(e.to_string()))? };
+
+        unsafe {
+            // posizione (2) + uv (2) + colore (4) = 32 byte
+            gl.bind_vertex_array(Some(vao_testo));
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo_testo));
+            gl.enable_vertex_attrib_array(0);
+            gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, 32, 0);
+            gl.enable_vertex_attrib_array(1);
+            gl.vertex_attrib_pointer_f32(1, 2, glow::FLOAT, false, 32, 8);
+            gl.enable_vertex_attrib_array(2);
+            gl.vertex_attrib_pointer_f32(2, 4, glow::FLOAT, false, 32, 16);
+
+            // Il testo ha bisogno della trasparenza: senza, i bordi dei
+            // caratteri diventano rettangoli neri.
+            gl.enable(glow::BLEND);
+            gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+            gl.bind_vertex_array(None);
+        }
+
         unsafe {
             gl.bind_vertex_array(Some(vertex_array));
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(vertices));
@@ -179,6 +238,10 @@ impl Session {
             program,
             vertex_array,
             vertices,
+            programma_testo,
+            vao_testo,
+            vbo_testo,
+            caratteri: Vec::new(),
             screen: (dimensione.width as f32, dimensione.height as f32),
         };
         graphics.apply_viewport();
@@ -287,6 +350,146 @@ impl Graphics {
     pub fn open_gl_version(&self) -> String {
         unsafe { self.gl.get_parameter_string(glow::VERSION) }
     }
+
+    /// Copia il fotogramma corrente in RGBA.
+    ///
+    /// Le righe arrivano **dal basso verso l'alto**, come le consegna OpenGL:
+    /// chi le scrive su file deve tenerne conto (il BMP, per fortuna, e' gia'
+    /// orientato cosi').
+    pub fn read_pixels(&self) -> Vec<u8> {
+        let larghezza = self.screen.0 as i32;
+        let altezza = self.screen.1 as i32;
+        let mut dati = vec![0u8; (larghezza.max(0) * altezza.max(0) * 4) as usize];
+
+        unsafe {
+            self.gl.pixel_store_i32(glow::PACK_ALIGNMENT, 1);
+            self.gl.read_pixels(
+                0,
+                0,
+                larghezza,
+                altezza,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelPackData::Slice(&mut dati),
+            );
+        }
+
+        dati
+    }
+
+    // -- testo -----------------------------------------------------------------
+
+    /// Carica un font a una certa dimensione in pixel.
+    ///
+    /// Ritorna l'indice da passare a `draw_text`.
+    pub fn load_font(
+        &mut self,
+        percorso: &std::path::Path,
+        pixel: f32,
+    ) -> Result<usize, RenderError> {
+        let carattere = Carattere::new(&self.gl, percorso, pixel).map_err(RenderError::Gl)?;
+        self.caratteri.push(carattere);
+        Ok(self.caratteri.len() - 1)
+    }
+
+    /// Altezza di una riga per quel font.
+    pub fn line_height(&self, font: usize) -> f32 {
+        self.caratteri
+            .get(font)
+            .map(|c| c.altezza() * 1.25)
+            .unwrap_or(16.0)
+    }
+
+    /// Larghezza in pixel di una scritta.
+    pub fn measure_text(&mut self, font: usize, testo: &str) -> f32 {
+        let (gl, caratteri) = (&self.gl, &mut self.caratteri);
+        match caratteri.get_mut(font) {
+            Some(carattere) => carattere.misura(gl, testo).unwrap_or(0.0),
+            None => 0.0,
+        }
+    }
+
+    /// Disegna una scritta con l'angolo in alto a sinistra in `posizione`.
+    pub fn draw_text(
+        &mut self,
+        font: usize,
+        testo: &str,
+        posizione: (f32, f32),
+        colore: Color,
+    ) -> Result<(), RenderError> {
+        let (gl, caratteri) = (&self.gl, &mut self.caratteri);
+        let Some(carattere) = caratteri.get_mut(font) else {
+            return Ok(());
+        };
+
+        carattere.aggiorna(gl);
+        let glifi = carattere.impagina(gl, testo).map_err(RenderError::Gl)?;
+        if glifi.is_empty() {
+            return Ok(());
+        }
+
+        let texture = carattere.texture();
+        let rgba = [
+            colore.r as f32 / 255.0,
+            colore.g as f32 / 255.0,
+            colore.b as f32 / 255.0,
+            colore.a as f32 / 255.0,
+        ];
+
+        let mut dati: Vec<f32> = Vec::with_capacity(glifi.len() * 6 * 8);
+        for (glifo, avanzamento) in glifi {
+            if glifo.size[0] == 0.0 || glifo.size[1] == 0.0 {
+                continue;
+            }
+            let x = posizione.0 + avanzamento + glifo.offset[0];
+            let y = posizione.1 + glifo.offset[1];
+            let (w, h) = (glifo.size[0], glifo.size[1]);
+            let [u0, v0, u1, v1] = glifo.uv;
+
+            let angoli = [
+                (x, y, u0, v0),
+                (x + w, y, u1, v0),
+                (x + w, y + h, u1, v1),
+                (x, y, u0, v0),
+                (x + w, y + h, u1, v1),
+                (x, y + h, u0, v1),
+            ];
+            for (px, py, u, v) in angoli {
+                dati.push(px);
+                dati.push(py);
+                dati.push(u);
+                dati.push(v);
+                dati.extend_from_slice(&rgba);
+            }
+        }
+
+        if dati.is_empty() {
+            return Ok(());
+        }
+
+        unsafe {
+            gl.use_program(Some(self.programma_testo));
+            let pos = gl.get_uniform_location(self.programma_testo, "schermo");
+            gl.uniform_2_f32(pos.as_ref(), self.screen.0, self.screen.1);
+            let unita = gl.get_uniform_location(self.programma_testo, "atlante");
+            gl.uniform_1_i32(unita.as_ref(), 0);
+
+            gl.active_texture(glow::TEXTURE0);
+            gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+
+            gl.bind_vertex_array(Some(self.vao_testo));
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo_testo));
+            let byte: &[u8] = core::slice::from_raw_parts(
+                dati.as_ptr() as *const u8,
+                dati.len() * std::mem::size_of::<f32>(),
+            );
+            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, byte, glow::STREAM_DRAW);
+            gl.draw_arrays(glow::TRIANGLES, 0, (dati.len() / 8) as i32);
+            gl.bind_vertex_array(None);
+        }
+
+        Ok(())
+    }
 }
 
 unsafe fn compila_programma(gl: &glow::Context) -> Result<glow::Program, RenderError> {
@@ -306,6 +509,30 @@ unsafe fn compila_programma(gl: &glow::Context) -> Result<glow::Program, RenderE
         )));
     }
 
+    gl.delete_shader(vertice);
+    gl.delete_shader(frammento);
+    Ok(program)
+}
+
+unsafe fn compila_programma_da(
+    gl: &glow::Context,
+    vertice_src: &str,
+    frammento_src: &str,
+) -> Result<glow::Program, RenderError> {
+    let vertice = compila(gl, glow::VERTEX_SHADER, vertice_src)?;
+    let frammento = compila(gl, glow::FRAGMENT_SHADER, frammento_src)?;
+    let program = gl
+        .create_program()
+        .map_err(|e| RenderError::Gl(e.to_string()))?;
+    gl.attach_shader(program, vertice);
+    gl.attach_shader(program, frammento);
+    gl.link_program(program);
+    if !gl.get_program_link_status(program) {
+        return Err(RenderError::Gl(format!(
+            "collegamento degli shader fallito: {}",
+            gl.get_program_info_log(program)
+        )));
+    }
     gl.delete_shader(vertice);
     gl.delete_shader(frammento);
     Ok(program)

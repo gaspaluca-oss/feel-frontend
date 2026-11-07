@@ -24,3 +24,7 @@ desktop.ini
 .vscode/
 .idea/
 *.swp
+
+# Fotogrammi di prova
+*.bmp
+/_layout/
