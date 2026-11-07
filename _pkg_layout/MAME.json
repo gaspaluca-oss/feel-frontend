@@ -1,0 +1,304 @@
+{
+  "version": 1,
+  "name": "MAME",
+  "design_size": {
+    "width": 640.0,
+    "height": 480.0
+  },
+  "shader": "none",
+  "background": {
+    "image": "main.png",
+    "on_top": false
+  },
+  "elements": [
+    {
+      "kind": "list",
+      "visible": true,
+      "placement": {
+        "point": {
+          "horizontal": "left",
+          "vertical": "middle"
+        },
+        "reference": {
+          "horizontal": "left",
+          "vertical": "middle"
+        },
+        "offset": {
+          "x": {
+            "fraction": 0.0421875
+          },
+          "y": {
+            "fraction": 0.08229167
+          }
+        }
+      },
+      "size": {
+        "width": {
+          "fraction": 0.428125
+        },
+        "height": {
+          "fraction": 0.5729167
+        }
+      },
+      "style": {
+        "font": "Arial",
+        "size": {
+          "fraction": 0.022916667
+        },
+        "bold": true,
+        "italic": false,
+        "color": {
+          "r": 150,
+          "g": 200,
+          "b": 50,
+          "a": 200
+        },
+        "background": {
+          "r": 22,
+          "g": 7,
+          "b": 27,
+          "a": 200
+        },
+        "align": "left"
+      },
+      "stretch": false,
+      "row_background": true
+    },
+    {
+      "kind": {
+        "artwork": "snap"
+      },
+      "visible": true,
+      "placement": {
+        "point": {
+          "horizontal": "right",
+          "vertical": "middle"
+        },
+        "reference": {
+          "horizontal": "right",
+          "vertical": "middle"
+        },
+        "offset": {
+          "x": {
+            "fraction": -0.0796875
+          },
+          "y": {
+            "fraction": 0.08645833
+          }
+        }
+      },
+      "size": {
+        "width": {
+          "fraction": 0.35625
+        },
+        "height": {
+          "fraction": 0.35625
+        }
+      },
+      "stretch": false,
+      "row_background": false
+    },
+    {
+      "kind": {
+        "label": "rom_counter"
+      },
+      "visible": true,
+      "placement": {
+        "point": {
+          "horizontal": "center",
+          "vertical": "bottom"
+        },
+        "reference": {
+          "horizontal": "center",
+          "vertical": "bottom"
+        },
+        "offset": {
+          "x": {
+            "fraction": -0.1140625
+          },
+          "y": {
+            "fraction": -0.08125
+          }
+        }
+      },
+      "size": {
+        "width": {
+          "fraction": 0.159375
+        },
+        "height": {
+          "fraction": 0.0375
+        }
+      },
+      "style": {
+        "font": "Arial",
+        "size": {
+          "fraction": 0.016666668
+        },
+        "bold": false,
+        "italic": false,
+        "color": {
+          "r": 255,
+          "g": 128,
+          "b": 0,
+          "a": 255
+        },
+        "align": "right"
+      },
+      "stretch": false,
+      "row_background": false
+    },
+    {
+      "kind": {
+        "label": "platform"
+      },
+      "visible": true,
+      "placement": {
+        "point": {
+          "horizontal": "right",
+          "vertical": "top"
+        },
+        "reference": {
+          "horizontal": "right",
+          "vertical": "top"
+        },
+        "offset": {
+          "x": {
+            "fraction": -0.078125
+          },
+          "y": {
+            "fraction": 0.19166666
+          }
+        }
+      },
+      "size": {
+        "width": {
+          "fraction": 0.359375
+        },
+        "height": {
+          "fraction": 0.072916664
+        }
+      },
+      "style": {
+        "font": "Arial",
+        "size": {
+          "fraction": 0.029166667
+        },
+        "bold": false,
+        "italic": false,
+        "color": {
+          "r": 128,
+          "g": 192,
+          "b": 192,
+          "a": 255
+        },
+        "align": "center"
+      },
+      "stretch": false,
+      "row_background": false
+    },
+    {
+      "kind": {
+        "label": "rom_name"
+      },
+      "visible": true,
+      "placement": {
+        "point": {
+          "horizontal": "left",
+          "vertical": "bottom"
+        },
+        "reference": {
+          "horizontal": "left",
+          "vertical": "bottom"
+        },
+        "offset": {
+          "x": {
+            "fraction": 0.046875
+          },
+          "y": {
+            "fraction": -0.08125
+          }
+        }
+      },
+      "size": {
+        "width": {
+          "fraction": 0.240625
+        },
+        "height": {
+          "fraction": 0.0375
+        }
+      },
+      "style": {
+        "font": "Arial",
+        "size": {
+          "fraction": 0.016666668
+        },
+        "bold": false,
+        "italic": false,
+        "color": {
+          "r": 128,
+          "g": 0,
+          "b": 64,
+          "a": 255
+        },
+        "align": "left"
+      },
+      "stretch": false,
+      "row_background": false
+    }
+  ],
+  "menu": {
+    "width": {
+      "fraction": 0.3125
+    },
+    "item_height": {
+      "fraction": 0.05
+    },
+    "font": "Arial",
+    "size": {
+      "fraction": 0.022916667
+    },
+    "color": {
+      "r": 150,
+      "g": 200,
+      "b": 50,
+      "a": 200
+    },
+    "background": {
+      "r": 96,
+      "g": 64,
+      "b": 96,
+      "a": 200
+    },
+    "selected_color": {
+      "r": 255,
+      "g": 255,
+      "b": 196,
+      "a": 255
+    },
+    "selected_background": {
+      "r": 196,
+      "g": 128,
+      "b": 196,
+      "a": 200
+    },
+    "show_sidebar": true
+  },
+  "screensaver": {
+    "background": {
+      "r": 0,
+      "g": 0,
+      "b": 0,
+      "a": 255
+    },
+    "color": {
+      "r": 0,
+      "g": 96,
+      "b": 96,
+      "a": 255
+    }
+  },
+  "assets": [
+    "main.png",
+    "snap.png"
+  ]
+}

@@ -82,6 +82,46 @@ pub struct Testura {
     pub height: u32,
 }
 
+/// Rotazione dell'immagine finale, per i cabinati verticali.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Rotazione {
+    #[default]
+    Nessuna,
+    Sinistra,
+    Destra,
+}
+
+impl Rotazione {
+    fn indice(self) -> i32 {
+        match self {
+            Self::Nessuna => 0,
+            Self::Sinistra => 1,
+            Self::Destra => 2,
+        }
+    }
+}
+
+/// Effetto applicato all'immagine finale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Effetto {
+    #[default]
+    Nessuno,
+    Crt,
+    Lcd,
+    Scanline,
+}
+
+impl Effetto {
+    fn indice(self) -> i32 {
+        match self {
+            Self::Nessuno => 0,
+            Self::Crt => 1,
+            Self::Lcd => 2,
+            Self::Scanline => 3,
+        }
+    }
+}
+
 pub struct Graphics {
     window: Window,
     gl: glow::Context,
@@ -96,6 +136,10 @@ pub struct Graphics {
     vbo_testo: glow::Buffer,
     caratteri: Vec<Carattere>,
     textures: Vec<Testura>,
+    programma_composizione: glow::Program,
+    fbo: glow::Framebuffer,
+    fbo_texture: glow::Texture,
+    fbo_dimensione: (i32, i32),
     screen: (f32, f32),
 }
 
@@ -137,6 +181,81 @@ void main() {
 }
 "#;
 
+/// Il passaggio finale: prende la scena disegnata in una texture e la porta a
+/// schermo applicando l'effetto e la rotazione.
+///
+/// Serve un passaggio in piu' perche' scanline, curvatura e maschera RGB sono
+/// effetti *sull'immagine intera*: per applicarli bisogna averla gia' disegnata.
+const COMPOSIZIONE_FRAMMENTO: &str = r#"#version 330 core
+in vec2 v_uv;
+in vec4 v_colore;
+
+uniform sampler2D scena;
+uniform vec2 risoluzione;
+uniform int effetto;
+uniform int rotazione;
+
+out vec4 colore_finale;
+
+void main() {
+    vec2 uv = v_uv;
+
+    // Rotazione per i cabinati verticali.
+    if (rotazione == 1) {
+        uv = vec2(uv.y, 1.0 - uv.x);
+    } else if (rotazione == 2) {
+        uv = vec2(1.0 - uv.y, uv.x);
+    }
+
+    vec2 p = uv * 2.0 - 1.0;
+
+    // Curvatura del tubo: si allontanano le coordinate dal centro in modo
+    // quadratico, cosi' i bordi si incurvano come su un CRT vero.
+    if (effetto == 1) {
+        p *= 1.0 + 0.045 * dot(p, p);
+        uv = p * 0.5 + 0.5;
+        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+            colore_finale = vec4(0.0, 0.0, 0.0, 1.0);
+            return;
+        }
+    }
+
+    vec3 c = texture(scena, uv).rgb;
+
+    // Scanline: una riga chiara e una scura, come su un tubo.
+    //
+    // Il periodo e' di due pixel *fisici* e si legge da gl_FragCoord, non da
+    // uv: con uv e l'altezza dello schermo si otterrebbero centinaia di cicli
+    // su un monitor moderno, che non si vedono e producono moire'.
+    if (effetto == 1 || effetto == 3) {
+        float linea = sin(gl_FragCoord.y * 3.14159265);
+        float attenuazione = linea > 0.0 ? 1.0 : 0.72;
+        c *= attenuazione;
+    }
+
+    // Maschera RGB: le tre componenti non stanno negli stessi pixel.
+    if (effetto == 1) {
+        float colonna = mod(gl_FragCoord.x, 3.0);
+        vec3 maschera = vec3(0.90);
+        if (colonna < 1.0) {
+            maschera.r = 1.0;
+        } else if (colonna < 2.0) {
+            maschera.g = 1.0;
+        } else {
+            maschera.b = 1.0;
+        }
+        c *= maschera;
+
+        // Vignettatura e leggero bagliore al centro.
+        float vignetta = clamp(1.0 - 0.38 * dot(p, p), 0.0, 1.0);
+        c *= vignetta;
+        c *= 1.08;
+    }
+
+    colore_finale = vec4(clamp(c, 0.0, 1.0), 1.0);
+}
+"#;
+
 const TESTO_FRAMMENTO: &str = r#"#version 330 core
 in vec2 v_uv;
 in vec4 v_colore;
@@ -157,6 +276,9 @@ impl Session {
 
         let builder = WindowBuilder::new()
             .with_title(titolo)
+            // Una dimensione di partenza sensata: senza, il sistema sceglie,
+            // e su uno schermo 1440p la finestra diventa enorme.
+            .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0))
             .with_resizable(true);
 
         let template = ConfigTemplateBuilder::new().with_api(Api::OPENGL);
@@ -240,6 +362,11 @@ impl Session {
             .set_swap_interval(&context, SwapInterval::Wait(NonZeroU32::new(1).unwrap()))
             .ok();
 
+        let programma_composizione =
+            unsafe { compila_programma_da(&gl, TESTO_VERTICE, COMPOSIZIONE_FRAMMENTO)? };
+        let fbo = unsafe { gl.create_framebuffer().map_err(|e| RenderError::Gl(e.to_string()))? };
+        let fbo_texture = unsafe { gl.create_texture().map_err(|e| RenderError::Gl(e.to_string()))? };
+
         let mut graphics = Graphics {
             window,
             gl,
@@ -253,9 +380,13 @@ impl Session {
             vbo_testo,
             caratteri: Vec::new(),
             textures: Vec::new(),
+            programma_composizione,
+            fbo,
+            fbo_texture,
+            fbo_dimensione: (0, 0),
             screen: (dimensione.width as f32, dimensione.height as f32),
         };
-        graphics.apply_viewport();
+        graphics.ricrea_fbo(dimensione.width as i32, dimensione.height as i32);
 
         Ok(Self { event_loop, graphics })
     }
@@ -281,13 +412,112 @@ impl Graphics {
             NonZeroU32::new(larghezza).unwrap(),
             NonZeroU32::new(altezza).unwrap(),
         );
-        self.apply_viewport();
+        self.ricrea_fbo(larghezza as i32, altezza as i32);
     }
 
-    fn apply_viewport(&mut self) {
+    /// Ricrea la texture su cui si disegna la scena.
+    ///
+    /// Va rifatta a ogni cambio di dimensione: una texture di dimensioni
+    /// sbagliate produce un'immagine tagliata o sfocata, non un errore.
+    fn ricrea_fbo(&mut self, larghezza: i32, altezza: i32) {
+        if larghezza <= 0 || altezza <= 0 {
+            return;
+        }
+        if self.fbo_dimensione == (larghezza, altezza) {
+            return;
+        }
+
         unsafe {
+            self.gl.bind_texture(glow::TEXTURE_2D, Some(self.fbo_texture));
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+            self.gl.tex_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                glow::RGBA as i32,
+                larghezza,
+                altezza,
+                0,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                None,
+            );
+
+            self.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
+            self.gl.framebuffer_texture_2d(
+                glow::FRAMEBUFFER,
+                glow::COLOR_ATTACHMENT0,
+                glow::TEXTURE_2D,
+                Some(self.fbo_texture),
+                0,
+            );
+            self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            self.gl.bind_texture(glow::TEXTURE_2D, None);
+        }
+
+        self.fbo_dimensione = (larghezza, altezza);
+    }
+
+    /// Inizia a disegnare la scena nella texture intermedia.
+    ///
+    /// Da chiamare al posto di `clear`: pulisce e prepara il bersaglio.
+    pub fn begin_scene(&self, colore: Color) {
+        unsafe {
+            self.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
+            self.gl.viewport(0, 0, self.fbo_dimensione.0, self.fbo_dimensione.1);
+            self.gl.clear_color(
+                colore.r as f32 / 255.0,
+                colore.g as f32 / 255.0,
+                colore.b as f32 / 255.0,
+                colore.a as f32 / 255.0,
+            );
+            self.gl.clear(glow::COLOR_BUFFER_BIT);
+        }
+    }
+
+    /// Chiude la scena e la porta a schermo con l'effetto scelto.
+    pub fn end_scene(&self, effetto: Effetto, rotazione: Rotazione) {
+        let schermo = Rect::new(0.0, 0.0, self.screen.0, self.screen.1);
+        // L'asse verticale della texture e' invertito rispetto allo schermo:
+        // nei framebuffer OpenGL v=0 sta in basso, mentre il nostro vertice
+        // in alto a sinistra deve campionare l'alto della scena.
+        let dati = vertici_texturizzati(schermo, [0.0, 1.0, 1.0, 0.0], [1.0, 1.0, 1.0, 1.0]);
+
+        unsafe {
+            self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            self.gl.viewport(0, 0, self.screen.0 as i32, self.screen.1 as i32);
+
+            self.gl.use_program(Some(self.programma_composizione));
+
+            let pos = self.gl.get_uniform_location(self.programma_composizione, "schermo");
+            self.gl.uniform_2_f32(pos.as_ref(), self.screen.0, self.screen.1);
+            let risoluzione = self
+                .gl
+                .get_uniform_location(self.programma_composizione, "risoluzione");
             self.gl
-                .viewport(0, 0, self.screen.0 as i32, self.screen.1 as i32);
+                .uniform_2_f32(risoluzione.as_ref(), self.screen.0, self.screen.1);
+            let eff = self.gl.get_uniform_location(self.programma_composizione, "effetto");
+            self.gl.uniform_1_i32(eff.as_ref(), effetto.indice());
+            let rot = self.gl.get_uniform_location(self.programma_composizione, "rotazione");
+            self.gl.uniform_1_i32(rot.as_ref(), rotazione.indice());
+            let scena = self.gl.get_uniform_location(self.programma_composizione, "scena");
+            self.gl.uniform_1_i32(scena.as_ref(), 0);
+
+            self.gl.active_texture(glow::TEXTURE0);
+            self.gl.bind_texture(glow::TEXTURE_2D, Some(self.fbo_texture));
+
+            self.gl.bind_vertex_array(Some(self.vao_testo));
+            self.gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo_testo));
+            let byte: &[u8] = core::slice::from_raw_parts(
+                dati.as_ptr() as *const u8,
+                dati.len() * std::mem::size_of::<f32>(),
+            );
+            self.gl
+                .buffer_data_u8_slice(glow::ARRAY_BUFFER, byte, glow::STREAM_DRAW);
+            self.gl.draw_arrays(glow::TRIANGLES, 0, 6);
+            self.gl.bind_vertex_array(None);
         }
     }
 

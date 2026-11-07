@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "video": {
+    "fullscreen": false,
+    "shader": "crt",
+    "rotate": "none",
+    "vsync": true,
+    "show_fps": false
+  },
+  "audio": {
+    "master": 80,
+    "music": 50,
+    "effects": 100,
+    "video": 30
+  },
+  "screensaver": {
+    "enabled": true,
+    "delay_secs": 60,
+    "slide_secs": 8,
+    "use_videos": true
+  },
+  "input": {
+    "up": "Up",
+    "down": "Down",
+    "left": "Left",
+    "right": "Right",
+    "select": "Space",
+    "back": "Escape",
+    "page_up": "PageUp",
+    "page_down": "PageDown"
+  }
+}

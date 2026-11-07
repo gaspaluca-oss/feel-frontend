@@ -17,8 +17,9 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use feel_core::{Color, ElementKind, Layout, Rect};
+use feel_config::Settings;
 use feel_db::Database;
-use feel_render::{Quad, Session};
+use feel_render::{Effetto, Quad, Rotazione, Session};
 use winit::event::{ElementState, Event, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
@@ -66,8 +67,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let layout: Layout = serde_json::from_str(&std::fs::read_to_string(&percorso_layout)?)?;
 
+    // Le impostazioni stanno accanto al database: un file solo per ogni
+    // libreria, cosi' due cabinati con librerie diverse non si pestano i piedi.
+    let percorso_impostazioni = database.with_file_name("feel.json");
+    let impostazioni = Settings::load_or_create(&percorso_impostazioni)?;
+    println!("Config : {}", percorso_impostazioni.display());
+
     let db = Database::open(&database)?;
     let chiave = feel_core::GamelistKey::new(nome_lista.clone());
+
+    // Serve la libreria intera per sapere dove stanno le immagini
+    // dell'emulatore: il percorso viene dalla configurazione di FEEL 1.x.
+    let libreria = db.load_library()?;
+    let cartella_snap = libreria
+        .gamelist(&chiave)
+        .and_then(|lista| libreria.emulator(&lista.platform, &lista.emulator))
+        .and_then(|emulatore| emulatore.artwork.snapshot.clone());
+
     let mut giochi = db.games_of(&chiave)?;
     let totale = giochi.len();
     if totale == 0 {
@@ -119,11 +135,35 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // disegna dentro il riquadro dello snapshot.
     let segnaposto = carica("snap.png");
 
+    // Schermo intero, se richiesto.
+    if impostazioni.video.fullscreen {
+        graphics.window().set_fullscreen(Some(
+            winit::window::Fullscreen::Borderless(None),
+        ));
+    }
+
+    let effetto = match impostazioni.video.shader {
+        feel_core::Shader::None => Effetto::Nessuno,
+        feel_core::Shader::Crt => Effetto::Crt,
+        feel_core::Shader::Lcd => Effetto::Lcd,
+        feel_core::Shader::Scanlines => Effetto::Scanline,
+    };
+    let rotazione = match impostazioni.video.rotate {
+        feel_config::Rotate::None => Rotazione::Nessuna,
+        feel_config::Rotate::Left => Rotazione::Sinistra,
+        feel_config::Rotate::Right => Rotazione::Destra,
+    };
+
     let mut scelta = 0usize;
     let mut primo_visibile = 0usize;
     let mut font: Option<usize> = None;
     let mut scatto_fatto = false;
     let avvio = Instant::now();
+
+    // Cache dell'immagine del gioco selezionato: caricare una texture a ogni
+    // fotogramma sarebbe uno spreco e farebbe scattare il disco sessanta
+    // volte al secondo.
+    let mut immagine_gioco: Option<(usize, Option<usize>)> = None;
 
     event_loop.run(move |event, controllo| {
         controllo.set_control_flow(winit::event_loop::ControlFlow::Wait);
@@ -135,27 +175,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     graphics.resize(dimensione.width, dimensione.height);
                 }
                 WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
-                    match event.physical_key {
-                        PhysicalKey::Code(KeyCode::Escape) => controllo.exit(),
-                        PhysicalKey::Code(KeyCode::ArrowDown) | PhysicalKey::Code(KeyCode::KeyS) => {
-                            if scelta + 1 < totale {
-                                scelta += 1;
-                            }
-                            graphics.window().request_redraw();
+                    // I tasti vengono dalle impostazioni, non dal codice: chi
+                    // vuole il joystick come frecce cambia feel.json e basta.
+                    let codice = match event.physical_key {
+                        PhysicalKey::Code(c) => c,
+                        _ => return,
+                    };
+
+                    if Some(codice) == tasto(&impostazioni.input.back) {
+                        controllo.exit();
+                    } else if Some(codice) == tasto(&impostazioni.input.down) {
+                        if scelta + 1 < totale {
+                            scelta += 1;
                         }
-                        PhysicalKey::Code(KeyCode::ArrowUp) | PhysicalKey::Code(KeyCode::KeyW) => {
-                            scelta = scelta.saturating_sub(1);
-                            graphics.window().request_redraw();
-                        }
-                        PhysicalKey::Code(KeyCode::PageDown) => {
-                            scelta = (scelta + 10).min(totale.saturating_sub(1));
-                            graphics.window().request_redraw();
-                        }
-                        PhysicalKey::Code(KeyCode::PageUp) => {
-                            scelta = scelta.saturating_sub(10);
-                            graphics.window().request_redraw();
-                        }
-                        _ => {}
+                        graphics.window().request_redraw();
+                    } else if Some(codice) == tasto(&impostazioni.input.up) {
+                        scelta = scelta.saturating_sub(1);
+                        graphics.window().request_redraw();
+                    } else if Some(codice) == tasto(&impostazioni.input.page_down) {
+                        scelta = (scelta + 10).min(totale.saturating_sub(1));
+                        graphics.window().request_redraw();
+                    } else if Some(codice) == tasto(&impostazioni.input.page_up) {
+                        scelta = scelta.saturating_sub(10);
+                        graphics.window().request_redraw();
                     }
                 }
                 _ => {}
@@ -248,7 +290,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     ));
                 }
 
-                graphics.clear(layout.screensaver.background);
+                graphics.begin_scene(layout.screensaver.background);
 
                 // Sfondo e snapshot vanno **prima** dei rettangoli, altrimenti
                 // la cornice dello snapshot finisce sotto all'immagine.
@@ -260,7 +302,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         false,
                     );
                 }
-                if let Some(id) = segnaposto {
+                // Immagine del gioco selezionato, se esiste; altrimenti il
+                // segnaposto del layout.
+                if immagine_gioco.map_or(true, |(indice, _)| indice != scelta) {
+                    let trovata = cartella_snap
+                        .as_ref()
+                        .and_then(|cartella| trova_immagine(cartella, giochi[scelta].key.as_str()))
+                        .and_then(|percorso| graphics.load_texture(&percorso).ok());
+                    if trovata.is_some() {
+                        println!("Snapshot del gioco: {}", giochi[scelta].title);
+                    }
+                    immagine_gioco = Some((scelta, trovata));
+                }
+                let da_disegnare = immagine_gioco
+                    .and_then(|(_, id)| id)
+                    .or(segnaposto);
+
+                if let Some(id) = da_disegnare {
                     if let Some(elemento) =
                         layout.find(&ElementKind::Artwork(feel_core::ArtworkSlot::Snap))
                     {
@@ -316,10 +374,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
-                graphics.present();
+                // Ultimo passaggio: effetto CRT, rotazione, e a schermo.
+                graphics.end_scene(effetto, rotazione);
 
                 // Cattura del fotogramma, per verificare cosa si vede davvero
-                // senza dover guardare lo schermo.
+                // senza dover guardare lo schermo. Va fatta prima di scambiare
+                // i buffer, altrimenti si legge il buffer sbagliato.
                 if let Some(percorso) = &scatto {
                     if !scatto_fatto {
                         let (larghezza, altezza) = graphics.screen();
@@ -333,12 +393,101 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         return;
                     }
                 }
+
+                graphics.present();
             }
             _ => {}
         }
     })?;
 
     Ok(())
+}
+
+/// Cerca l'immagine di un gioco nella cartella degli snapshot.
+///
+/// Le estensioni non sono configurabili in FEEL 1.x per ogni emulatore (c'e'
+/// `snapshot_extension`, ma vale per tutti): provarle in ordine costa tre
+/// `is_file` e copre il 99% delle installazioni reali.
+fn trova_immagine(cartella: &std::path::Path, nome: &str) -> Option<PathBuf> {
+    for estensione in ["png", "jpg", "jpeg", "PNG", "JPG"] {
+        let candidato = cartella.join(format!("{nome}.{estensione}"));
+        if candidato.is_file() {
+            return Some(candidato);
+        }
+    }
+    None
+}
+
+/// Traduce un nome di tasto delle impostazioni in un codice di winit.
+///
+/// I nomi sono quelli di FEEL 1.x (`Up`, `Return`, `LAlt`, `ESC`), cosi' chi
+/// arriva dal vecchio frontend ritrova le stesse parole nel file.
+fn tasto(nome: &str) -> Option<KeyCode> {
+    let normalizzato = nome.trim();
+    let codice = match normalizzato.to_ascii_lowercase().as_str() {
+        "up" | "su" => KeyCode::ArrowUp,
+        "down" | "giu" => KeyCode::ArrowDown,
+        "left" | "sinistra" => KeyCode::ArrowLeft,
+        "right" | "destra" => KeyCode::ArrowRight,
+        "return" | "enter" | "invio" => KeyCode::Enter,
+        "escape" | "esc" => KeyCode::Escape,
+        "space" | "spazio" => KeyCode::Space,
+        "pageup" | "pagina_su" => KeyCode::PageUp,
+        "pagedown" | "pagina_giu" => KeyCode::PageDown,
+        "tab" => KeyCode::Tab,
+        "lalt" => KeyCode::AltLeft,
+        "ralt" => KeyCode::AltRight,
+        "lctrl" | "lcontrol" => KeyCode::ControlLeft,
+        "rctrl" | "rcontrol" => KeyCode::ControlRight,
+        "lshift" => KeyCode::ShiftLeft,
+        "rshift" => KeyCode::ShiftRight,
+        altro => {
+            // Una lettera o una cifra singola: `1`, `2`, `A`...
+            let mut caratteri = altro.chars();
+            match (caratteri.next(), caratteri.next()) {
+                (Some('1'), None) => KeyCode::Digit1,
+                (Some('2'), None) => KeyCode::Digit2,
+                (Some('3'), None) => KeyCode::Digit3,
+                (Some('4'), None) => KeyCode::Digit4,
+                (Some('5'), None) => KeyCode::Digit5,
+                (Some('6'), None) => KeyCode::Digit6,
+                (Some('7'), None) => KeyCode::Digit7,
+                (Some('8'), None) => KeyCode::Digit8,
+                (Some('9'), None) => KeyCode::Digit9,
+                (Some('0'), None) => KeyCode::Digit0,
+                (Some('a'), None) => KeyCode::KeyA,
+                (Some('b'), None) => KeyCode::KeyB,
+                (Some('c'), None) => KeyCode::KeyC,
+                (Some('d'), None) => KeyCode::KeyD,
+                (Some('e'), None) => KeyCode::KeyE,
+                (Some('f'), None) => KeyCode::KeyF,
+                (Some('g'), None) => KeyCode::KeyG,
+                (Some('h'), None) => KeyCode::KeyH,
+                (Some('i'), None) => KeyCode::KeyI,
+                (Some('j'), None) => KeyCode::KeyJ,
+                (Some('k'), None) => KeyCode::KeyK,
+                (Some('l'), None) => KeyCode::KeyL,
+                (Some('m'), None) => KeyCode::KeyM,
+                (Some('n'), None) => KeyCode::KeyN,
+                (Some('o'), None) => KeyCode::KeyO,
+                (Some('p'), None) => KeyCode::KeyP,
+                (Some('q'), None) => KeyCode::KeyQ,
+                (Some('r'), None) => KeyCode::KeyR,
+                (Some('s'), None) => KeyCode::KeyS,
+                (Some('t'), None) => KeyCode::KeyT,
+                (Some('u'), None) => KeyCode::KeyU,
+                (Some('v'), None) => KeyCode::KeyV,
+                (Some('w'), None) => KeyCode::KeyW,
+                (Some('x'), None) => KeyCode::KeyX,
+                (Some('y'), None) => KeyCode::KeyY,
+                (Some('z'), None) => KeyCode::KeyZ,
+                _ => return None,
+            }
+        }
+    };
+
+    let _ = normalizzato;
+    Some(codice)
 }
 
 fn screen_size(schermo: (f32, f32)) -> feel_core::ScreenSize {

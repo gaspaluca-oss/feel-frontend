@@ -344,6 +344,7 @@ dependencies = [
 name = "feel-app"
 version = "0.1.0"
 dependencies = [
+ "feel-config",
  "feel-core",
  "feel-db",
  "feel-render",
@@ -368,6 +369,7 @@ version = "0.1.0"
 dependencies = [
  "feel-core",
  "serde",
+ "serde_json",
  "thiserror",
 ]
 

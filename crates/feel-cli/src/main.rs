@@ -32,6 +32,7 @@ Uso:
   feel list   <file.db> <lista>
   feel launch <file.db> <lista> <rom> [--dry-run]
   feel layout <cartella-feel> [--out <cartella>] [--dry-run]
+  feel config <file> [set <chiave> <valore> | keys]
 
 Comandi:
   import   legge una installazione FEEL 1.x e scrive la libreria in un database
@@ -39,6 +40,7 @@ Comandi:
   list     elenca i giochi di una lista
   launch   avvia un gioco e registra il tempo di gioco
   layout   converte i layout dal formato di FEEL 1.x a quello di FEEL 2.0
+  config   mostra o cambia le impostazioni di FEEL 2.0
 
 Opzioni:
   --db <file>         database su cui lavorare (obbligatorio per import)
@@ -63,6 +65,7 @@ fn main() -> ExitCode {
         "list" => comando_list(&args[1..]),
         "launch" => comando_launch(&args[1..]),
         "layout" => comando_layout(&args[1..]),
+        "config" => comando_config(&args[1..]),
         altro => Err(format!("comando sconosciuto: {altro} (prova --help)").into()),
     };
 
@@ -304,6 +307,66 @@ fn comando_launch(args: &[String]) -> Result<(), Box<dyn Error>> {
         Timestamp::now(),
     )?;
     println!("Partita registrata.");
+
+    Ok(())
+}
+
+// ----------------------------------------------------------------------------------
+// config
+// ----------------------------------------------------------------------------------
+
+fn comando_config(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let percorso = args.first().ok_or("manca il file delle impostazioni (es. feel.json)")?;
+    let percorso = PathBuf::from(percorso);
+
+    match args.get(1).map(String::as_str) {
+        Some("set") => {
+            let chiave = args.get(2).ok_or("manca la chiave da cambiare")?;
+            let valore = args.get(3).ok_or("manca il valore")?;
+            let mut impostazioni = feel_config::Settings::load_or_create(&percorso)?;
+            impostazioni.set(chiave, valore)?;
+            impostazioni.save(&percorso)?;
+            println!("{chiave} = {valore}");
+            println!("scritto in {}", percorso.display());
+        }
+        Some("keys") => {
+            println!("Chiavi modificabili:");
+            for chiave in feel_config::Settings::chiavi() {
+                println!("  {chiave}");
+            }
+        }
+        Some(altro) => return Err(format!("sottocomando sconosciuto: {altro} (set, keys)").into()),
+        None => {
+            // Mostrare le impostazioni non deve creare il file: chi guarda
+            // non sta necessariamente configurando.
+            let impostazioni = feel_config::Settings::load(&percorso)?;
+            println!("Impostazioni: {}", percorso.display());
+            if !percorso.exists() {
+                println!("(il file non esiste: questi sono i valori predefiniti)");
+            }
+            println!();
+            println!("  video.fullscreen          {}", impostazioni.video.fullscreen);
+            println!("  video.shader              {:?}", impostazioni.video.shader);
+            println!("  video.rotate              {:?}", impostazioni.video.rotate);
+            println!("  video.vsync               {}", impostazioni.video.vsync);
+            println!("  video.show_fps            {}", impostazioni.video.show_fps);
+            println!("  audio.master              {}", impostazioni.audio.master);
+            println!("  audio.music               {}", impostazioni.audio.music);
+            println!("  audio.effects             {}", impostazioni.audio.effects);
+            println!("  audio.video               {}", impostazioni.audio.video);
+            println!("  screensaver.enabled       {}", impostazioni.screensaver.enabled);
+            println!("  screensaver.delay_secs    {}", impostazioni.screensaver.delay_secs);
+            println!("  screensaver.slide_secs    {}", impostazioni.screensaver.slide_secs);
+            println!("  screensaver.use_videos    {}", impostazioni.screensaver.use_videos);
+            println!("  font                      {}", impostazioni.font.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "(di sistema)".into()));
+            println!("  layout                    {}", impostazioni.layout.as_deref().unwrap_or("(nessuno)"));
+            println!();
+            println!("Comandi del frontend:");
+            for (comando, tasto) in impostazioni.input.tutte() {
+                println!("  input.{comando:<12} {tasto}");
+            }
+        }
+    }
 
     Ok(())
 }
