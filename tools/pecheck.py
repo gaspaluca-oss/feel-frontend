@@ -46,7 +46,7 @@ OK_ON_WIN7 = {
     "shell32.dll", "shlwapi.dll", "comctl32.dll", "comdlg32.dll", "ole32.dll",
     "oleaut32.dll", "userenv.dll", "ws2_32.dll", "winmm.dll", "msvcrt.dll",
     "bcrypt.dll", "crypt32.dll", "dbghelp.dll", "imm32.dll", "version.dll",
-    "opengl32.dll", "dsound.dll", "dinput8.dll", "xinput1_3.dll", "d3d9.dll",
+    "opengl32.dll", "dsound.dll", "uxtheme.dll", "dinput8.dll", "xinput1_3.dll", "d3d9.dll",
     "dxgi.dll", "dwmapi.dll", "setupapi.dll", "wininet.dll", "iphlpapi.dll",
 }
 

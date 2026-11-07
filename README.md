@@ -97,11 +97,30 @@ accorgersi di un problema prima di trovarlo sul cabinato.
 
 ### Linux
 
-Niente da preparare oltre a Rust: l'host è quello nativo.
+Il codice non ha parti specifiche di Windows: finestra, OpenGL e input passano da
+`winit`, `glutin` e `glow`, che sono multipiattaforma.
+
+**Non è mai stato compilato né provato su Linux.** È la prima cosa da verificare, e
+finché non è fatto va considerato non funzionante là.
+
+Una cosa aiuta: su Linux si usa **Rust stable**, non la 1.77.2. Quel pin esiste solo
+per Windows 7, e le dipendenze che qui vanno fissate a mano (`jobserver`,
+`unicode-segmentation`, `quick-xml`) lì si risolvono da sole. Il build è più semplice,
+non più difficile.
+
+Pacchetti necessari (Debian/Ubuntu):
+
+```bash
+sudo apt install build-essential pkg-config \
+    libx11-dev libxi-dev libxkbcommon-dev libwayland-dev \
+    libgl1-mesa-dev libegl1-mesa-dev fonts-dejavu-core
+```
+
+Poi:
 
 ```bash
 cargo test
-cargo build --release
+cargo build --release -p feel-cli -p feel-app
 ```
 
 ### Windows

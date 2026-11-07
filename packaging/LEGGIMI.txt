@@ -1,57 +1,71 @@
-FEEL 2.0 - anteprima 0.1.0 (solo riga di comando)
-=================================================
+FEEL 2.0 - anteprima 0.1.0
+==========================
 
-Cosa e' questo
----------------
-Il motore di FEEL 2.0: importa la configurazione di FEEL 1.x, la salva in un
-database, converte i layout e avvia gli emulatori.
+Cosa c'e' dentro
+----------------
+  feel-app.exe   il frontend grafico
+  feel.exe       gli strumenti a riga di comando
+  AVVIA-GUI.bat  apre il frontend sulla libreria di esempio
+  AVVIA-DEMO.bat la dimostrazione dei comandi, passo per passo
+  demo\          una libreria di esempio completa
 
-NON e' ancora il frontend grafico: la finestra con la lista dei giochi, i video
-e le skin deve ancora essere scritta. Questa anteprima serve a verificare che
-il motore funzioni, sui dati veri.
+NON e' ancora un frontend finito. Manca: le immagini (sfondo, snapshot,
+marquee), gli shader CRT, i gamepad. Quello che c'e' funziona ed e'
+verificato: legge la libreria, disegna la lista con i titoli veri, scorre
+con le frecce.
 
 Requisiti
 ---------
-Windows 7 SP1 o successivo, 32 o 64 bit. Nessuna installazione: e' un solo
-file eseguibile, senza DLL da copiare accanto.
+Windows 7 SP1 o successivo, 32 o 64 bit. Scheda video con OpenGL 3.3
+(dal 2010 in poi praticamente tutte).
+
+Nessuna installazione: sono due eseguibili, senza DLL da copiare accanto.
 
 Prova rapida
 ------------
-Fai doppio clic su  AVVIA-DEMO.bat
+Fai doppio clic su  AVVIA-GUI.bat
 
-Importa la libreria di esempio, elenca i giochi, mostra il comando di avvio e
-avvia un emulatore simulato. Serve a vedere il ciclo completo senza avere MAME
-installato.
+Apre il frontend sulla libreria di esempio: tre giochi, frecce per scorrere,
+Esc per uscire.
 
-Uso con la tua installazione FEEL 1.x
--------------------------------------
-Apri un prompt nella cartella di questo file e scrivi:
+I comandi, per esteso
+---------------------
+Apri un prompt nella cartella di questo file.
 
-  feel import "C:\Program Files\Feel" --db feel.sqlite
-  feel info   feel.sqlite
-  feel list   feel.sqlite mame-0
-  feel launch feel.sqlite mame-0 pacman --dry-run
-  feel launch feel.sqlite mame-0 pacman
-  feel layout "C:\Program Files\Feel" --out layout-convertiti
+  Importare una installazione FEEL 1.x in un database:
+
+    feel import "C:\Program Files\Feel" --db feel.sqlite
+
+  Vedere cosa contiene:
+
+    feel info feel.sqlite
+    feel list feel.sqlite mame-0
+
+  Convertire i layout dal vecchio formato al nuovo:
+
+    feel layout "C:\Program Files\Feel" --out layout
+
+  Aprire il frontend:
+
+    feel-app.exe feel.sqlite mame-0 layout\MAME.json
+
+  Cosa verrebbe eseguito per un gioco, senza eseguirlo:
+
+    feel launch feel.sqlite mame-0 pacman --dry-run
+
+  Avviare davvero, e registrare il tempo giocato:
+
+    feel launch feel.sqlite mame-0 pacman
 
 Se hai spostato le rom:
 
   feel import "C:\Program Files\Feel" --db feel.sqlite --remap "C:\Program Files\mame=D:\MAME"
 
-Comandi
--------
-  import   legge una installazione FEEL 1.x e scrive la libreria in un database
-  info     mostra cosa contiene un database
-  list     elenca i giochi di una lista
-  launch   avvia un gioco e registra il tempo di gioco
-  layout   converte i layout dal formato di FEEL 1.x a quello di FEEL 2.0
-
-  --dry-run  mostra cosa farebbe, senza scrivere o avviare niente
-
 Consiglio: usa sempre --dry-run la prima volta. Mostra l'eseguibile, il
 percorso della rom, la riga di comando e le applicazioni di pre/post avvio
-esattamente come verrebbero eseguiti. E' il modo piu' veloce per capire perche'
-un gioco non parte.
+esattamente come verrebbero eseguiti. E' il modo piu' veloce per capire
+perche' un gioco non parte. E vale anche per feel-app: se la finestra non
+si apre, il primo sospetto e' OpenGL 3.3.
 
 Licenza
 -------
