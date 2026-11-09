@@ -1,0 +1,92 @@
+# Verifica automatica del progetto.
+#
+# Serve a una cosa sola, ma importante: dimostrare che il codice compila e passa
+# i test **su Linux**, non solo su Windows. La macchina di sviluppo è Windows e
+# Windows 7 impone una toolchain vecchia (1.77.2): senza questa verifica, "gira
+# anche su Linux" resterebbe una promessa.
+#
+# Su Linux si usa Rust recente, non la 1.77.2: i blocchi che su Windows vanno
+# fissati a mano (jobserver, unicode-segmentation, uuid) lì si risolvono da soli.
+# Le versioni fissate nel Cargo.lock restano valide: sono compatibili anche con
+# le toolchain nuove.
+
+name: CI
+
+on:
+  push:
+    branches: ["feel2", "master"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    name: Linux (x86_64, Rust stable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dipendenze di sistema per finestra e OpenGL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libx11-dev libxi-dev libxcursor-dev libxrandr-dev \
+            libxkbcommon-dev libwayland-dev \
+            libgl1-mesa-dev libegl1-mesa-dev \
+            fonts-dejavu-core
+
+      - name: Toolchain Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+          cargo --version
+
+      - name: Test di tutto il workspace
+        run: cargo test --workspace
+
+      - name: Build in release
+        run: cargo build --release --workspace
+
+      - name: Il frontend grafico parte senza display?
+        # Senza DISPLAY il contesto OpenGL non si crea: ci si aspetta un errore
+        # pulito, non un panico. Serve a verificare che il messaggio sia chiaro
+        # invece di uno scarabocchio.
+        run: |
+          set +e
+          ./target/release/feel-app --help 2>&1 | head -5
+          ./target/release/feel-app /tmp/inesistente.db lista /tmp/inesistente.json 2>&1 | head -5
+          echo "uscita: $?"
+
+  windows:
+    name: Windows (i686, come il cabinato con Windows 7)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # MinGW a 32 bit: Rust non include un linker.
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW32
+          update: true
+          install: mingw-w64-i686-gcc
+
+      - name: Aggiungo MinGW al PATH
+        shell: pwsh
+        run: echo "C:\msys64\mingw32\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Toolchain a 32 bit (l'host MSVC non ha link.exe)
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.77.2-i686-pc-windows-gnu --profile minimal --force-non-host
+          rustup run 1.77.2-i686-pc-windows-gnu rustc --version
+
+      - name: Test
+        shell: pwsh
+        run: cargo +1.77.2-i686-pc-windows-gnu test --workspace
+
+      - name: Build e verifica della compatibilita' con Windows 7
+        shell: pwsh
+        run: |
+          cargo +1.77.2-i686-pc-windows-gnu build --release --workspace
+          python tools/pecheck.py target/release/feel.exe target/release/feel-app.exe
