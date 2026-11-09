@@ -33,6 +33,8 @@ Uso:
   feel launch <file.db> <lista> <rom> [--dry-run]
   feel layout <cartella-feel> [--out <cartella>] [--dry-run]
   feel config <file> [set <chiave> <valore> | keys]
+  feel scan   <file.db> <lista> [--dry-run] [--replace]
+  feel emulator <file.db> <lista> [show | set <campo> <valore>]
 
 Comandi:
   import   legge una installazione FEEL 1.x e scrive la libreria in un database
@@ -41,6 +43,8 @@ Comandi:
   launch   avvia un gioco e registra il tempo di gioco
   layout   converte i layout dal formato di FEEL 1.x a quello di FEEL 2.0
   config   mostra o cambia le impostazioni di FEEL 2.0
+  scan     costruisce una lista guardando le rom nella cartella dell'emulatore
+  emulator mostra o cambia la configurazione dell'emulatore di una lista
 
 Opzioni:
   --db <file>         database su cui lavorare (obbligatorio per import)
@@ -66,6 +70,8 @@ fn main() -> ExitCode {
         "launch" => comando_launch(&args[1..]),
         "layout" => comando_layout(&args[1..]),
         "config" => comando_config(&args[1..]),
+        "scan" => comando_scan(&args[1..]),
+        "emulator" => comando_emulator(&args[1..]),
         altro => Err(format!("comando sconosciuto: {altro} (prova --help)").into()),
     };
 
@@ -322,6 +328,219 @@ fn comando_launch(args: &[String]) -> Result<(), Box<dyn Error>> {
         Timestamp::now(),
     )?;
     println!("Partita registrata.");
+
+    Ok(())
+}
+
+// ----------------------------------------------------------------------------------
+// emulator
+// ----------------------------------------------------------------------------------
+
+/// I campi modificabili di un emulatore, con il nome che si usa da riga di comando.
+const CAMPI_EMULATORE: &[&str] = &[
+    "executable",
+    "arguments",
+    "rom_path",
+    "extensions",
+    "snapshot_path",
+    "video_path",
+    "marquee_path",
+    "cabinet_path",
+    "recursive",
+    "layout",
+    "title",
+    "working_dir",
+];
+
+fn comando_emulator(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let percorso_db = args.first().ok_or("manca il file del database")?;
+    let nome_lista = args.get(1).ok_or("manca il nome della lista")?;
+
+    let mut db = Database::open(percorso_db)?;
+    let chiave = feel_core::GamelistKey::new(nome_lista.clone());
+    let mut emulatore = db
+        .emulator_of(&chiave)?
+        .ok_or_else(|| format!("la lista '{nome_lista}' non ha un emulatore"))?;
+
+    match args.get(2).map(String::as_str) {
+        Some("set") => {
+            let campo = args.get(3).ok_or("manca il campo da cambiare")?;
+            let valore = args.get(4).ok_or("manca il valore")?;
+            cambia_campo(&mut emulatore, campo, valore)?;
+            db.update_emulator(&emulatore)?;
+            println!("{campo} = {valore}");
+            println!("salvato.");
+        }
+        Some("show") | None => mostra_emulatore(&emulatore),
+        Some(altro) => return Err(format!("sottocomando sconosciuto: {altro} (show, set)").into()),
+    }
+
+    Ok(())
+}
+
+fn mostra_emulatore(emulatore: &feel_core::Emulator) {
+    println!("Emulatore     : {} ({})", emulatore.title, emulatore.key);
+    println!("Piattaforma   : {}", emulatore.platform);
+    println!("Eseguibile    : {}", emulatore.executable.display());
+    println!("Argomenti     : {}", emulatore.arguments.join(" "));
+    println!("Cartella rom  : {}", emulatore.rom_path.display());
+    println!("Estensioni    : {}", emulatore.rom_extensions.join(", "));
+    println!(
+        "Sottocartelle : {}",
+        if emulatore.recursive_roms { "si'" } else { "no" }
+    );
+    println!(
+        "Layout        : {}",
+        emulatore.layout.as_ref().map(|l| l.as_str()).unwrap_or("(nessuno)")
+    );
+    for (nome, percorso) in [
+        ("snapshot", &emulatore.artwork.snapshot),
+        ("video", &emulatore.artwork.video),
+        ("marquee", &emulatore.artwork.marquee),
+        ("cabinet", &emulatore.artwork.cabinet),
+    ] {
+        if let Some(percorso) = percorso {
+            println!("{nome:<13} : {}", percorso.display());
+        }
+    }
+    if let Some(pre) = &emulatore.pre_launch {
+        println!("Prima         : {}", pre.executable.display());
+    }
+    if let Some(post) = &emulatore.post_launch {
+        println!("Dopo          : {}", post.executable.display());
+    }
+    println!();
+    println!("Campi modificabili: {}", CAMPI_EMULATORE.join(", "));
+}
+
+fn cambia_campo(
+    emulatore: &mut feel_core::Emulator,
+    campo: &str,
+    valore: &str,
+) -> Result<(), Box<dyn Error>> {
+    let valore = valore.trim();
+    // Un percorso fra virgolette o con slash in avanti: si accettano entrambi,
+    // perche' chi incolla da Windows scrive \, chi da Linux scrive /.
+    let percorso = std::path::PathBuf::from(valore.replace('/', "\\"));
+
+    match campo {
+        "executable" => emulatore.executable = percorso,
+        "working_dir" => emulatore.working_directory = Some(percorso),
+        "rom_path" => emulatore.rom_path = percorso,
+        "snapshot_path" => emulatore.artwork.snapshot = Some(percorso),
+        "video_path" => emulatore.artwork.video = Some(percorso),
+        "marquee_path" => emulatore.artwork.marquee = Some(percorso),
+        "cabinet_path" => emulatore.artwork.cabinet = Some(percorso),
+        "arguments" => {
+            emulatore.arguments = valore.split_whitespace().map(str::to_owned).collect();
+        }
+        "extensions" => {
+            emulatore.rom_extensions = valore
+                .split(',')
+                .map(|e| e.trim().trim_start_matches('.').to_ascii_lowercase())
+                .filter(|e| !e.is_empty())
+                .collect();
+        }
+        "recursive" => {
+            emulatore.recursive_roms = matches!(
+                valore.to_ascii_lowercase().as_str(),
+                "si" | "sì" | "1" | "true" | "on" | "yes"
+            );
+        }
+        "layout" => {
+            emulatore.layout = if valore.is_empty() {
+                None
+            } else {
+                Some(feel_core::LayoutKey::new(valore))
+            };
+        }
+        "title" => emulatore.title = valore.to_owned(),
+        altro => {
+            return Err(format!(
+                "campo sconosciuto: {altro}
+Campi: {}",
+                CAMPI_EMULATORE.join(", ")
+            )
+            .into())
+        }
+    }
+    Ok(())
+}
+
+// ----------------------------------------------------------------------------------
+// scan
+// ----------------------------------------------------------------------------------
+
+fn comando_scan(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let percorso_db = args.first().ok_or("manca il file del database")?;
+    let nome_lista = args.get(1).ok_or("manca il nome della lista")?;
+    let dry_run = args.iter().any(|argomento| argomento == "--dry-run");
+    let sostituisci = args.iter().any(|argomento| argomento == "--replace");
+
+    let mut db = Database::open(percorso_db)?;
+    let chiave = feel_core::GamelistKey::new(nome_lista.clone());
+
+    let emulatore = db
+        .emulator_of(&chiave)?
+        .ok_or_else(|| format!("la lista '{nome_lista}' non ha un emulatore"))?;
+
+    println!("Cartella rom : {}", emulatore.rom_path.display());
+    println!("Estensioni   : {}", emulatore.rom_extensions.join(", "));
+    println!(
+        "Sottocartelle: {}",
+        if emulatore.recursive_roms { "si'" } else { "no" }
+    );
+
+    let giochi = feel_config::leggi_cartella(&emulatore, &chiave, emulatore.recursive_roms)?;
+    println!("Trovate      : {} rom", giochi.len());
+
+    if giochi.is_empty() {
+        println!();
+        println!("Nessuna rom trovata. Controlla che il percorso sia giusto e che le");
+        println!("estensioni corrispondano: e' la causa di quasi tutti i vuoti.");
+        return Ok(());
+    }
+
+    if dry_run {
+        println!();
+        for gioco in giochi.iter().take(10) {
+            println!(
+                "  {}  {}",
+                gioco.key,
+                gioco.relative_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            );
+        }
+        if giochi.len() > 10 {
+            println!("  ... e altre {}", giochi.len() - 10);
+        }
+        println!();
+        println!("--dry-run: niente e' stato scritto.");
+        return Ok(());
+    }
+
+    if sostituisci {
+        let rimossi = db.clear_games(&chiave)?;
+        if rimossi > 0 {
+            println!("Rimossi      : {rimossi} (la lista e' stata ricaricata da zero)");
+        }
+    }
+
+    let aggiunti = db.add_games(&chiave, &giochi)?;
+    println!("Aggiunte     : {aggiunti}");
+    if aggiunti < giochi.len() {
+        println!(
+            "Gia' presenti : {} (i loro dati restano quelli che erano)",
+            giochi.len() - aggiunti
+        );
+    }
+
+    let conta = db.counts()?;
+    println!();
+    println!("La lista ora ha {} giochi.", db.games_of(&chiave)?.len());
+    let _ = conta;
 
     Ok(())
 }

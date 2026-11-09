@@ -14,6 +14,7 @@ pub mod feel1;
 pub mod ini;
 pub mod layout1;
 pub mod paths;
+pub mod scan;
 pub mod settings;
 
 pub use feel1::{
@@ -22,4 +23,5 @@ pub use feel1::{
 pub use ini::IniMap;
 pub use layout1::{convert as convert_layout, load as load_layout, parse_color};
 pub use paths::PathRules;
+pub use scan::leggi_cartella;
 pub use settings::{Rotate, Settings, SettingsError, SETTINGS_VERSION};

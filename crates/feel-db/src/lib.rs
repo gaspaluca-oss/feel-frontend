@@ -518,6 +518,106 @@ impl Database {
         Ok(())
     }
 
+    /// Riscrive la riga di un emulatore.
+    ///
+    /// Serve a configurare l'emulatore dal frontend: percorso delle rom,
+    /// eseguibile, argomenti, cartelle delle immagini. La posizione nella
+    /// piattaforma resta quella che era, altrimenti cambiare il percorso delle
+    /// rom sposterebbe l'emulatore in fondo all'elenco.
+    pub fn update_emulator(&mut self, emulatore: &Emulator) -> Result<(), DbError> {
+        self.conn.execute(
+            "UPDATE emulator SET
+                 title = ?3, executable = ?4, arguments = ?5, working_dir = ?6,
+                 rom_path = ?7, rom_extensions = ?8, layout = ?9, recursive_roms = ?10,
+                 snapshot_path = ?11, video_path = ?12, marquee_path = ?13,
+                 cabinet_path = ?14, controls_path = ?15, pre_launch = ?16, post_launch = ?17
+             WHERE platform = ?1 AND id = ?2",
+            params![
+                emulatore.platform.as_str(),
+                emulatore.key.as_str(),
+                emulatore.title,
+                emulatore.executable.to_string_lossy(),
+                encode_list(&emulatore.arguments)?,
+                emulatore.working_directory.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                emulatore.rom_path.to_string_lossy(),
+                encode_list(&emulatore.rom_extensions)?,
+                emulatore.layout.as_ref().map(|l| l.as_str().to_owned()),
+                emulatore.recursive_roms as i64,
+                emulatore.artwork.snapshot.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                emulatore.artwork.video.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                emulatore.artwork.marquee.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                emulatore.artwork.cabinet.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                emulatore.artwork.control_panel.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                encode_hook(emulatore.pre_launch.as_ref())?,
+                encode_hook(emulatore.post_launch.as_ref())?,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Svuota una lista, lasciando stare tutto il resto.
+    ///
+    /// Serve a ricaricare una lista da zero dopo aver cambiato la cartella
+    /// delle rom: senza, i giochi vecchi resterebbero accanto ai nuovi.
+    pub fn clear_games(&mut self, gamelist: &GamelistKey) -> Result<usize, DbError> {
+        let quanti = self.conn.execute(
+            "DELETE FROM game WHERE gamelist = ?1",
+            params![gamelist.as_str()],
+        )?;
+        Ok(quanti)
+    }
+
+    /// Aggiunge giochi a una lista senza toccare quelli che ci sono gia'.
+    ///
+    /// Serve a costruire una lista guardando le rom su disco: un gioco gia'
+    /// presente mantiene i suoi dati (anno, produttore, categoria) anche se il
+    /// file viene ritrovato, perche' quelli vengono dallo scraping o da MAME e
+    /// non dal nome del file.
+    pub fn add_games(
+        &mut self,
+        gamelist: &GamelistKey,
+        giochi: &[Game],
+    ) -> Result<usize, DbError> {
+        let tx = self.conn.transaction()?;
+        let mut aggiunti = 0usize;
+
+        for gioco in giochi {
+            let righe = tx.execute(
+                "INSERT OR IGNORE INTO game (
+                     gamelist, id, title, year, manufacturer, clone_of, bios,
+                     category, rotation, controls, status, relative_path
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                params![
+                    gamelist.as_str(),
+                    gioco.key.as_str(),
+                    gioco.title,
+                    gioco.year,
+                    gioco.manufacturer,
+                    gioco.clone_of.as_ref().map(|k| k.as_str().to_owned()),
+                    gioco.bios,
+                    gioco.category,
+                    gioco.rotation.map(rotation_to_text),
+                    gioco.controls,
+                    gioco.status,
+                    gioco.relative_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                ],
+            )?;
+            aggiunti += righe;
+        }
+
+        tx.commit()?;
+        Ok(aggiunti)
+    }
+
+    /// L'emulatore di una lista, con tutto quello che serve per avviare i giochi.
+    pub fn emulator_of(&self, gamelist: &GamelistKey) -> Result<Option<Emulator>, DbError> {
+        let libreria = self.load_library()?;
+        Ok(libreria
+            .gamelist(gamelist)
+            .and_then(|lista| libreria.emulator(&lista.platform, &lista.emulator))
+            .cloned())
+    }
+
     // -- preferiti ---------------------------------------------------------------
 
     /// Segna o toglie un gioco dai preferiti.
