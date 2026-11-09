@@ -19,3 +19,4 @@ feel-launch = { path = "../feel-launch" }
 feel-render = { path = "../feel-render" }
 serde_json = "1"
 winit = "0.29"
+gilrs = "0.10"

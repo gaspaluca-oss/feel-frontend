@@ -778,6 +778,65 @@ impl Graphics {
         Ok(self.textures.len() - 1)
     }
 
+    /// Sostituisce i pixel di una texture gia' caricata.
+    ///
+    /// Serve ai video: ricreare la texture a ogni fotogramma significherebbe
+    /// riallocare memoria trenta volte al secondo.
+    pub fn update_texture(
+        &self,
+        indice: usize,
+        pixel: &[u8],
+        larghezza: u32,
+        altezza: u32,
+    ) -> Result<(), RenderError> {
+        let Some(testura) = self.textures.get(indice) else {
+            return Ok(());
+        };
+
+        unsafe {
+            self.gl.bind_texture(glow::TEXTURE_2D, Some(testura.id));
+            self.gl.tex_sub_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                0,
+                0,
+                larghezza as i32,
+                altezza as i32,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelUnpackData::Slice(pixel),
+            );
+        }
+        Ok(())
+    }
+
+    /// Crea una texture vuota, da riempire con `update_texture`.
+    ///
+    pub fn create_texture(&mut self, larghezza: u32, altezza: u32) -> Result<usize, RenderError> {
+        let vuoto = vec![0u8; (larghezza * altezza * 4) as usize];
+        let id = unsafe { self.gl.create_texture().map_err(|e| RenderError::Gl(e.to_string()))? };
+        unsafe {
+            self.gl.bind_texture(glow::TEXTURE_2D, Some(id));
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+            self.gl.tex_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                glow::RGBA as i32,
+                larghezza as i32,
+                altezza as i32,
+                0,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                Some(&vuoto),
+            );
+        }
+        self.textures.push(Testura { id, width: larghezza, height: altezza });
+        Ok(self.textures.len() - 1)
+    }
+
     pub fn texture_size(&self, indice: usize) -> Option<(u32, u32)> {
         self.textures.get(indice).map(|t| (t.width, t.height))
     }

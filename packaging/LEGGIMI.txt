@@ -9,10 +9,12 @@ Cosa c'e' dentro
   AVVIA-DEMO.bat la dimostrazione dei comandi, passo per passo
   demo\          una libreria di esempio completa
 
-NON e' ancora un frontend finito. Manca: le immagini (sfondo, snapshot,
-marquee), gli shader CRT, i gamepad. Quello che c'e' funziona ed e'
-verificato: legge la libreria, disegna la lista con i titoli veri, scorre
-con le frecce.
+Quello che c'e' funziona ed e' verificato: legge la libreria, disegna la lista
+con i titoli veri, mostra lo snapshot del gioco, applica l'effetto CRT,
+scorre con frecce o joystick, e si configura da solo (F1).
+
+Per i VIDEO snap serve FFmpeg installato e raggiungibile nel PATH. Senza, il
+frontend mostra l'immagine ferma: non e' un errore, e' una ricaduta.
 
 Requisiti
 ---------

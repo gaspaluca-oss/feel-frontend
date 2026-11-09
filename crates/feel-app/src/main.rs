@@ -12,7 +12,9 @@
 //!
 //! Il layout si ottiene da: feel layout "cartella-feel" --out cartella
 
+mod gamepad;
 mod impostazioni;
+mod video;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -109,6 +111,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|lista| libreria.emulator(&lista.platform, &lista.emulator))
         .cloned();
 
+    let cartella_video = emulatore.as_ref().and_then(|e| e.artwork.video.clone());
+
     let mut giochi = db.games_of(&chiave)?;
     let totale = giochi.len();
     if totale == 0 {
@@ -167,6 +171,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut scatto_fatto = false;
     let avvio = Instant::now();
 
+    // Il gamepad e' opzionale: se non c'e' o il sistema non lo espone, il
+    // frontend funziona lo stesso con la tastiera.
+    let mut gilrs = match gilrs::Gilrs::new() {
+        Ok(g) => {
+            let quanti = g.gamepads().count();
+            println!("Gamepad: {quanti} trovati");
+            Some(g)
+        }
+        Err(err) => {
+            eprintln!("gamepad non disponibile: {err}");
+            None
+        }
+    };
+    let mut leva_verticale = gamepad::Leva::nuova(gamepad::Azione::Su, gamepad::Azione::Giu);
+    let mut leva_orizzontale =
+        gamepad::Leva::nuova(gamepad::Azione::Sinistra, gamepad::Azione::Destra);
+
     let mut modalita = if mostra_impostazioni {
         Modalita::Impostazioni
     } else {
@@ -189,6 +210,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Cache delle immagini del layout: uno sfondo animato cambia fotogramma,
     // non ricarica il file.
     let mut cache: std::collections::HashMap<PathBuf, usize> = std::collections::HashMap::new();
+
+    // Video snap del gioco selezionato: (indice gioco, decodificatore, texture).
+    let mut video_gioco: Option<(usize, video::Video, usize)> = None;
+    const LARGHEZZA_VIDEO: u32 = 320;
+    const ALTEZZA_VIDEO: u32 = 240;
 
     event_loop.run(move |event, controllo| {
         controllo.set_control_flow(winit::event_loop::ControlFlow::Wait);
@@ -322,6 +348,135 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     graphics.window().request_redraw();
                 }
 
+                // Il gamepad si legge a ogni giro e non a ogni evento della
+                // finestra: la leva analogica produce valori continui, non
+                // pressioni.
+                if let Some(pad) = gilrs.as_mut() {
+                    use gamepad::Azione;
+
+                    let mut azioni: Vec<Azione> = Vec::new();
+                    while let Some(evento) = pad.next_event() {
+                        match evento.event {
+                            gilrs::EventType::ButtonPressed(gilrs::Button::DPadUp, _) => {
+                                azioni.push(Azione::Su)
+                            }
+                            gilrs::EventType::ButtonPressed(gilrs::Button::DPadDown, _) => {
+                                azioni.push(Azione::Giu)
+                            }
+                            gilrs::EventType::ButtonPressed(gilrs::Button::DPadLeft, _) => {
+                                azioni.push(Azione::Sinistra)
+                            }
+                            gilrs::EventType::ButtonPressed(gilrs::Button::DPadRight, _) => {
+                                azioni.push(Azione::Destra)
+                            }
+                            gilrs::EventType::ButtonPressed(gilrs::Button::South, _) => {
+                                azioni.push(Azione::Conferma)
+                            }
+                            gilrs::EventType::ButtonPressed(gilrs::Button::East, _) => {
+                                azioni.push(Azione::Indietro)
+                            }
+                            gilrs::EventType::ButtonPressed(gilrs::Button::Start, _) => {
+                                azioni.push(Azione::Menu)
+                            }
+                            gilrs::EventType::AxisChanged(gilrs::Axis::LeftStickY, valore, _) => {
+                                if let Some(azione) =
+                                    leva_verticale.aggiorna(valore, 0.6, 0.35)
+                                {
+                                    azioni.push(azione);
+                                }
+                            }
+                            gilrs::EventType::AxisChanged(gilrs::Axis::LeftStickX, valore, _) => {
+                                if let Some(azione) =
+                                    leva_orizzontale.aggiorna(valore, 0.6, 0.35)
+                                {
+                                    azioni.push(azione);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    for azione in azioni {
+                        use gamepad::Azione as A;
+                        ultimo_input = Instant::now();
+
+                        if modalita == Modalita::Attesa {
+                            modalita = Modalita::Sfoglia;
+                            ultimo_avanzamento = Instant::now();
+                            // Riarma le leve: chi torna dalla modalita'
+                            // attrattiva non deve ritrovarsi un movimento
+                            // gia' in corso.
+                            leva_verticale.riarma();
+                            leva_orizzontale.riarma();
+                            continue;
+                        }
+
+                        match azione {
+                            A::Indietro => {
+                                if modalita == Modalita::Impostazioni {
+                                    if let Err(err) =
+                                        impostazioni.save(&percorso_impostazioni)
+                                    {
+                                        eprintln!("non riesco a salvare: {err}");
+                                    }
+                                    modalita = Modalita::Sfoglia;
+                                } else {
+                                    controllo.exit();
+                                }
+                            }
+                            A::Menu => {
+                                modalita = Modalita::Impostazioni;
+                                voce_impostazioni = 0;
+                            }
+                            A::Su | A::Giu if modalita == Modalita::Impostazioni => {
+                                let quante = impostazioni::VOCI.len();
+                                if azione == A::Su {
+                                    voce_impostazioni = (voce_impostazioni + quante - 1) % quante;
+                                } else {
+                                    voce_impostazioni = (voce_impostazioni + 1) % quante;
+                                }
+                            }
+                            A::Sinistra | A::Destra if modalita == Modalita::Impostazioni => {
+                                let verso = if azione == A::Destra { 1 } else { -1 };
+                                applica_modifica(
+                                    &mut impostazioni,
+                                    voce_impostazioni,
+                                    verso,
+                                    &mut effetto,
+                                    &mut rotazione,
+                                    graphics.window(),
+                                );
+                            }
+                            A::Su if modalita == Modalita::Sfoglia => {
+                                scelta = scelta.saturating_sub(1);
+                            }
+                            A::Giu if modalita == Modalita::Sfoglia => {
+                                if scelta + 1 < totale {
+                                    scelta += 1;
+                                }
+                            }
+                            A::Conferma if modalita == Modalita::Sfoglia => {
+                                if let (Some(emulatore), Some(gioco)) =
+                                    (emulatore.as_ref(), giochi.get(scelta))
+                                {
+                                    match avvia_gioco(emulatore, gioco, &database) {
+                                        Ok(durata) => println!(
+                                            "Tornato al frontend dopo {:.0} secondi.",
+                                            durata.as_secs_f64()
+                                        ),
+                                        Err(err) => {
+                                            eprintln!("non riesco ad avviare: {err}")
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+
+                        graphics.window().request_redraw();
+                    }
+                }
+
                 if let Some(limite) = auto_exit {
                     if avvio.elapsed() > limite {
                         controllo.exit();
@@ -450,8 +605,52 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     immagine_gioco = Some((scelta, trovata));
                 }
-                let da_disegnare = immagine_gioco
-                    .and_then(|(_, id)| id)
+                // Video del gioco, se c'e' e se il decodificatore risponde.
+                // Se FFmpeg manca, si resta sull'immagine ferma: un video che
+                // non parte non deve impedire di usare il cabinato.
+                if video_gioco.as_ref().map_or(true, |(indice, _, _)| *indice != scelta) {
+                    video_gioco = None;
+                    if let (Some(cartella), Some(gioco)) = (&cartella_video, giochi.get(scelta)) {
+                        if let Some(percorso) = video::trova_video(cartella, gioco.key.as_str()) {
+                            match video::Video::da_ffmpeg(&percorso, LARGHEZZA_VIDEO, ALTEZZA_VIDEO) {
+                                Ok(decodificatore) => {
+                                    match graphics.create_texture(LARGHEZZA_VIDEO, ALTEZZA_VIDEO) {
+                                        Ok(texture) => {
+                                            println!("Video: {}", percorso.display());
+                                            video_gioco = Some((scelta, decodificatore, texture));
+                                        }
+                                        Err(err) => eprintln!("texture del video: {err}"),
+                                    }
+                                }
+                                Err(err) => println!(
+                                    "video non disponibile ({err}): uso l'immagine ferma"
+                                ),
+                            }
+                        }
+                    }
+                }
+
+                let mut texture_video = None;
+                if let Some((_, decodificatore, texture)) = video_gioco.as_mut() {
+                    // A fine video resta l'ultimo fotogramma invece di
+                    // sparire: e' meno fastidioso di un riquadro nero.
+                    match decodificatore.leggi_frame() {
+                        Ok(true) => {
+                            let _ = graphics.update_texture(
+                                *texture,
+                                decodificatore.pixel(),
+                                LARGHEZZA_VIDEO,
+                                ALTEZZA_VIDEO,
+                            );
+                        }
+                        Ok(false) => {}
+                        Err(err) => eprintln!("lettura del video: {err}"),
+                    }
+                    texture_video = Some(*texture);
+                }
+
+                let da_disegnare = texture_video
+                    .or_else(|| immagine_gioco.and_then(|(_, id)| id))
                     .or(segnaposto);
 
                 if let Some(id) = da_disegnare {
