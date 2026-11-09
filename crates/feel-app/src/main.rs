@@ -12,6 +12,7 @@
 //!
 //! Il layout si ottiene da: feel layout "cartella-feel" --out cartella
 
+mod filtro;
 mod gamepad;
 mod impostazioni;
 mod video;
@@ -165,8 +166,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         ));
     }
 
+    // Preferiti e filtro sono scelte dell'utente: si leggono all'avvio.
+    let mut preferiti: std::collections::HashSet<feel_core::GameKey> =
+        db.favourites_of(&chiave)?.into_iter().collect();
+    let mut filtro_corrente = filtro::Filtro::Tutti;
+
     let mut scelta = 0usize;
-    let mut primo_visibile = 0usize;
+    let mut scostamento = 0usize;
     let mut font: Option<usize> = None;
     let mut scatto_fatto = false;
     let avvio = Instant::now();
@@ -234,6 +240,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     };
 
                     ultimo_input = Instant::now();
+
+                    // I visibili servono anche qui: la navigazione deve saltare
+                    // i giochi che il filtro nasconde.
+                    let visibili = filtro::visibili(&giochi, &filtro_corrente, &preferiti);
 
                     // In modalita' attrattiva un tasto qualsiasi riporta al
                     // frontend senza fare altro: chi tocca il cabinato vuole
@@ -307,18 +317,52 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                             graphics.window().request_redraw();
                         }
                     } else if Some(codice) == tasto(&impostazioni.input.down) {
-                        if scelta + 1 < totale {
-                            scelta += 1;
+                        if let Some(nuovo) = filtro::sposta(&visibili, scelta, true) {
+                            scelta = nuovo;
                         }
                         graphics.window().request_redraw();
                     } else if Some(codice) == tasto(&impostazioni.input.up) {
-                        scelta = scelta.saturating_sub(1);
+                        if let Some(nuovo) = filtro::sposta(&visibili, scelta, false) {
+                            scelta = nuovo;
+                        }
                         graphics.window().request_redraw();
-                    } else if Some(codice) == tasto(&impostazioni.input.page_down) {
-                        scelta = (scelta + 10).min(totale.saturating_sub(1));
+                    } else if Some(codice) == tasto(&impostazioni.input.filter) {
+                        filtro_corrente = filtro::prossimo_filtro(&filtro_corrente, &giochi);
+                        scostamento = 0;
+                        if let Some(primo) =
+                            filtro::visibili(&giochi, &filtro_corrente, &preferiti).first()
+                        {
+                            scelta = *primo;
+                        }
                         graphics.window().request_redraw();
-                    } else if Some(codice) == tasto(&impostazioni.input.page_up) {
-                        scelta = scelta.saturating_sub(10);
+                    } else if Some(codice) == tasto(&impostazioni.input.favourite) {
+                        if let Some(gioco) = giochi.get(scelta) {
+                            let segnato = !preferiti.contains(&gioco.key);
+                            match Database::open(&database) {
+                                Ok(archivio) => {
+                                    if let Err(err) =
+                                        archivio.set_favourite(&chiave, &gioco.key, segnato)
+                                    {
+                                        eprintln!("preferiti: {err}");
+                                    }
+                                }
+                                Err(err) => eprintln!("non riapro il database: {err}"),
+                            }
+                            if segnato {
+                                preferiti.insert(gioco.key.clone());
+                            } else {
+                                preferiti.remove(&gioco.key);
+                            }
+                        }
+                        graphics.window().request_redraw();
+                    } else if let Some(lettera) = lettera_di(codice) {
+                        // Salto per lettera: su un cabinato non c'e' una
+                        // tastiera, ma un tasto che salta a "P" fa risparmiare
+                        // centinaia di pressioni sulla leva.
+                        if let Some(nuovo) = filtro::salta_a_lettera(&visibili, &giochi, lettera)
+                        {
+                            scelta = nuovo;
+                        }
                         graphics.window().request_redraw();
                     }
                 }
@@ -483,6 +527,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         return;
                     }
                 }
+                // Quali giochi si vedono, secondo il filtro attuale.
+                let visibili = filtro::visibili(&giochi, &filtro_corrente, &preferiti);
+
+                if !visibili.is_empty() && !visibili.contains(&scelta) {
+                    scelta = visibili[0];
+                }
+
                 let schermo = graphics.screen();
                 let mut quads = Vec::new();
 
@@ -515,13 +566,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let altezza_riga = (altezza_carattere * 1.8).max(8.0);
                 let righe_visibili = ((area_lista.height / altezza_riga).floor() as usize).max(1);
 
-                // Mantiene la selezione dentro la finestra visibile.
-                if scelta < primo_visibile {
-                    primo_visibile = scelta;
-                } else if scelta >= primo_visibile + righe_visibili {
-                    primo_visibile = scelta + 1 - righe_visibili;
-                }
-
                 let colore_testo = stile_lista
                     .as_ref()
                     .map(|stile| stile.color)
@@ -530,9 +574,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Righe visibili: prima i rettangoli, poi i testi sopra.
                 let mut righe: Vec<(Rect, usize)> = Vec::new();
-                let ultima = (primo_visibile + righe_visibili).min(totale);
-                for indice in primo_visibile..ultima {
-                    let y = area_lista.y + (indice - primo_visibile) as f32 * altezza_riga;
+                let posizione = visibili
+                    .iter()
+                    .position(|indice| *indice == scelta)
+                    .unwrap_or(0);
+                if posizione < scostamento {
+                    scostamento = posizione;
+                } else if posizione >= scostamento + righe_visibili {
+                    scostamento = posizione + 1 - righe_visibili;
+                }
+
+                let ultima = (scostamento + righe_visibili).min(visibili.len());
+                for posto in scostamento..ultima {
+                    let indice = visibili[posto];
+                    let y = area_lista.y + (posto - scostamento) as f32 * altezza_riga;
                     let riga = Rect::new(
                         area_lista.x + 2.0,
                         y,
@@ -687,7 +742,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         layout.find(&ElementKind::Label(feel_core::LabelKind::RomCounter))
                     {
                         let area = elemento.rect(screen_size(schermo));
-                        let testo = format!("{} / {totale}", scelta + 1);
+                        let posizione = visibili
+                            .iter()
+                            .position(|indice| *indice == scelta)
+                            .unwrap_or(0);
+                        let testo = format!(
+                            "{} / {}   {}",
+                            posizione + 1,
+                            visibili.len(),
+                            filtro_corrente.etichetta()
+                        );
                         let colore = elemento
                             .style
                             .as_ref()
@@ -873,6 +937,23 @@ fn trova_immagine(cartella: &std::path::Path, nome: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// La lettera corrispondente a un tasto, se e' un tasto di lettera.
+fn lettera_di(codice: KeyCode) -> Option<char> {
+    let lettera = match codice {
+        KeyCode::KeyA => 'a', KeyCode::KeyB => 'b', KeyCode::KeyC => 'c',
+        KeyCode::KeyD => 'd', KeyCode::KeyE => 'e', KeyCode::KeyF => 'f',
+        KeyCode::KeyG => 'g', KeyCode::KeyH => 'h', KeyCode::KeyI => 'i',
+        KeyCode::KeyJ => 'j', KeyCode::KeyK => 'k', KeyCode::KeyL => 'l',
+        KeyCode::KeyM => 'm', KeyCode::KeyN => 'n', KeyCode::KeyO => 'o',
+        KeyCode::KeyP => 'p', KeyCode::KeyQ => 'q', KeyCode::KeyR => 'r',
+        KeyCode::KeyS => 's', KeyCode::KeyT => 't', KeyCode::KeyU => 'u',
+        KeyCode::KeyV => 'v', KeyCode::KeyW => 'w', KeyCode::KeyX => 'x',
+        KeyCode::KeyY => 'y', KeyCode::KeyZ => 'z',
+        _ => return None,
+    };
+    Some(lettera)
 }
 
 fn effetto_da(shader: feel_core::Shader) -> Effetto {

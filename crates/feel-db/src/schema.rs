@@ -11,7 +11,8 @@
 /// Versione dello schema. Va alzata a ogni modifica incompatibile.
 ///
 /// 1 -> 2: aggiunte le applicazioni pre/post emulatore.
-pub const SCHEMA_VERSION: i64 = 2;
+/// 2 -> 3: aggiunta la tabella dei preferiti.
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// Chiave sotto cui la versione e' salvata nella tabella `meta`.
 pub const VERSION_KEY: &str = "schema_version";
@@ -91,5 +92,21 @@ CREATE INDEX game_gamelist_idx ON game (gamelist);
 CREATE INDEX play_emulator_idx ON play (platform, emulator);
 "#;
 
+/// La tabella dei preferiti, per la migrazione dalla versione 2.
+pub const FAVOURITE_DDL: &str = r#"
+CREATE TABLE favourite (
+    gamelist TEXT NOT NULL,
+    game     TEXT NOT NULL,
+    added    TEXT,
+    PRIMARY KEY (gamelist, game)
+);
+"#;
+
 /// Le tabelle da svuotare per ripartire da zero, in ordine di dipendenza.
+/// Le tabelle che `store_library` svuota.
+///
+/// `favourite` non c'e' di proposito: e' una scelta dell'utente, non un dato
+/// derivato dalla libreria, e reimportare non deve cancellarla. Senza chiave
+/// esterna, un gioco che sparisce lascia una riga orfana che il JOIN di
+/// `favourites_of` ignora.
 pub const TABLES: [&str; 5] = ["play", "game", "gamelist", "emulator", "platform"];

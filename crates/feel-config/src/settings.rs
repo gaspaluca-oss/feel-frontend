@@ -132,6 +132,20 @@ pub struct InputSettings {
     /// Pagina successiva della lista.
     pub page_up: String,
     pub page_down: String,
+    /// Cambia il filtro: tutti, preferiti, categorie.
+    #[serde(default = "default_filter")]
+    pub filter: String,
+    /// Segna o toglie il gioco dai preferiti.
+    #[serde(default = "default_favourite")]
+    pub favourite: String,
+}
+
+fn default_filter() -> String {
+    "Tab".into()
+}
+
+fn default_favourite() -> String {
+    "F2".into()
 }
 
 impl Default for InputSettings {
@@ -145,6 +159,8 @@ impl Default for InputSettings {
             back: "Escape".into(),
             page_up: "PageUp".into(),
             page_down: "PageDown".into(),
+            filter: default_filter(),
+            favourite: default_favourite(),
         }
     }
 }
@@ -161,6 +177,8 @@ impl InputSettings {
         mappa.insert("indietro", self.back.as_str());
         mappa.insert("pagina_su", self.page_up.as_str());
         mappa.insert("pagina_giu", self.page_down.as_str());
+        mappa.insert("filtro", self.filter.as_str());
+        mappa.insert("preferito", self.favourite.as_str());
         mappa
     }
 }
@@ -324,6 +342,8 @@ impl Settings {
             "input.back" => self.input.back = valore.trim().to_owned(),
             "input.page_up" => self.input.page_up = valore.trim().to_owned(),
             "input.page_down" => self.input.page_down = valore.trim().to_owned(),
+            "input.filter" => self.input.filter = valore.trim().to_owned(),
+            "input.favourite" => self.input.favourite = valore.trim().to_owned(),
             "font" => {
                 let v = valore.trim();
                 self.font = if v.is_empty() || v == "nessuno" || v == "none" {
@@ -365,6 +385,8 @@ impl Settings {
             "input.back",
             "input.page_up",
             "input.page_down",
+            "input.filter",
+            "input.favourite",
             "font",
             "layout",
         ]

@@ -11,7 +11,7 @@
 //!   un'operazione atomica. Se si interrompe a meta', il database resta quello
 //!   di prima invece di diventare una libreria parziale che sembra valida.
 
-mod schema;
+pub mod schema;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -102,6 +102,9 @@ impl Database {
 
         if has_meta == 0 {
             self.conn.execute_batch(schema::DDL)?;
+            // La tabella dei preferiti ha un DDL suo perche' serve anche alla
+            // migrazione dalla versione 2: qui si crea insieme al resto.
+            self.conn.execute_batch(schema::FAVOURITE_DDL)?;
             self.conn.execute(
                 "INSERT INTO meta (key, value) VALUES (?1, ?2)",
                 params![schema::VERSION_KEY, SCHEMA_VERSION.to_string()],
@@ -120,6 +123,19 @@ impl Database {
 
         match raw.and_then(|value| value.parse::<i64>().ok()) {
             Some(found) if found == SCHEMA_VERSION => Ok(()),
+
+            // Migrazione dalla 2 alla 3: si aggiunge la tabella dei preferiti
+            // senza toccare niente di quello che c'e' gia'. Un utente che ha
+            // importato la libreria non deve rifarlo.
+            Some(2) => {
+                self.conn.execute_batch(schema::FAVOURITE_DDL)?;
+                self.conn.execute(
+                    "UPDATE meta SET value = ?1 WHERE key = ?2",
+                    params![SCHEMA_VERSION.to_string(), schema::VERSION_KEY],
+                )?;
+                Ok(())
+            }
+
             Some(found) => Err(DbError::SchemaVersion { found, expected: SCHEMA_VERSION }),
             // Tabelle presenti ma versione assente: schema non riconosciuto.
             // Meglio un errore chiaro che interpretare a caso.
@@ -500,6 +516,60 @@ impl Database {
             ],
         )?;
         Ok(())
+    }
+
+    // -- preferiti ---------------------------------------------------------------
+
+    /// Segna o toglie un gioco dai preferiti.
+    pub fn set_favourite(
+        &self,
+        gamelist: &GamelistKey,
+        game: &GameKey,
+        preferito: bool,
+    ) -> Result<(), DbError> {
+        if preferito {
+            self.conn.execute(
+                "INSERT OR IGNORE INTO favourite (gamelist, game, added) VALUES (?1, ?2, ?3)",
+                params![gamelist.as_str(), game.as_str(), Timestamp::now().to_string()],
+            )?;
+        } else {
+            self.conn.execute(
+                "DELETE FROM favourite WHERE gamelist = ?1 AND game = ?2",
+                params![gamelist.as_str(), game.as_str()],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn is_favourite(
+        &self,
+        gamelist: &GamelistKey,
+        game: &GameKey,
+    ) -> Result<bool, DbError> {
+        let quanti: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM favourite WHERE gamelist = ?1 AND game = ?2",
+            params![gamelist.as_str(), game.as_str()],
+            |row| row.get(0),
+        )?;
+        Ok(quanti > 0)
+    }
+
+    /// I preferiti di una lista, in ordine alfabetico.
+    pub fn favourites_of(&self, gamelist: &GamelistKey) -> Result<Vec<GameKey>, DbError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT f.game FROM favourite f
+             JOIN game g ON g.gamelist = f.gamelist AND g.id = f.game
+             WHERE f.gamelist = ?1 ORDER BY g.title",
+        )?;
+        let righe = stmt.query_map(params![gamelist.as_str()], |row| {
+            Ok(GameKey::new(row.get::<_, String>(0)?))
+        })?;
+
+        let mut fuori = Vec::new();
+        for riga in righe {
+            fuori.push(riga?);
+        }
+        Ok(fuori)
     }
 
     /// Le statistiche di un gioco.

@@ -221,3 +221,81 @@ fn una_libreria_vuota_si_salva_e_si_rilegge() {
     assert!(riletta.games.is_empty());
     assert_eq!(db.counts().unwrap(), Counts::default());
 }
+
+#[test]
+fn i_preferiti_si_mettono_e_si_tolgono() {
+    let mut db = Database::open_in_memory().unwrap();
+    db.store_library(&libreria_importata()).unwrap();
+
+    let lista = GamelistKey::new("mame-0");
+    let pacman = GameKey::new("pacman");
+    let galaga = GameKey::new("s1945");
+
+    assert!(!db.is_favourite(&lista, &pacman).unwrap());
+    assert!(db.favourites_of(&lista).unwrap().is_empty());
+
+    // In ordine alfabetico per titolo, non per nome rom: s1945 e' "Strikers
+    // 1945", pacman e' "Pac-Man (Midway)".
+    db.set_favourite(&lista, &pacman, true).unwrap();
+    db.set_favourite(&lista, &galaga, true).unwrap();
+
+    assert!(db.is_favourite(&lista, &pacman).unwrap());
+    assert_eq!(
+        db.favourites_of(&lista).unwrap(),
+        vec![pacman.clone(), galaga.clone()]
+    );
+
+    // Rimettarlo non lo duplica.
+    db.set_favourite(&lista, &pacman, true).unwrap();
+    assert_eq!(db.favourites_of(&lista).unwrap().len(), 2);
+
+    db.set_favourite(&lista, &pacman, false).unwrap();
+    assert!(!db.is_favourite(&lista, &pacman).unwrap());
+    assert_eq!(db.favourites_of(&lista).unwrap(), vec![galaga]);
+}
+
+#[test]
+fn i_preferiti_sopravvivono_a_una_reimportazione() {
+    let library = libreria_importata();
+    let mut db = Database::open_in_memory().unwrap();
+    db.store_library(&library).unwrap();
+
+    let lista = GamelistKey::new("mame-0");
+    let pacman = GameKey::new("pacman");
+    db.set_favourite(&lista, &pacman, true).unwrap();
+
+    // Reimportare la stessa libreria non deve cancellare le scelte dell'utente.
+    db.store_library(&library).unwrap();
+    assert!(db.is_favourite(&lista, &pacman).unwrap());
+}
+
+#[test]
+fn un_database_della_versione_2_viene_aggiornato_senza_perdere_niente() {
+    let path = std::env::temp_dir().join(format!("feel-db-v2-{}.sqlite", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+
+    {
+        // Ricostruisco un database come lo lasciava la versione 2: stesse
+        // tabelle, senza quella dei preferiti.
+        // Stesse tabelle della versione 3 tranne quella dei preferiti: e'
+        // esattamente cio' che lasciava la versione 2.
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(feel_db::schema::DDL).unwrap();
+        conn.execute_batch(
+            "INSERT INTO meta (key, value) VALUES ('schema_version', '2');
+             INSERT INTO platform (id, title, position) VALUES ('arcade', 'Arcade', 0);",
+        )
+        .unwrap();
+    }
+
+    let db = Database::open(&path).expect("la migrazione deve riuscire");
+    assert_eq!(db.schema_version().unwrap(), feel_db::SCHEMA_VERSION);
+    // I dati che c'erano sono ancora li'.
+    assert_eq!(db.counts().unwrap().platforms, 1);
+    // E la tabella nuova funziona.
+    assert!(!db
+        .is_favourite(&GamelistKey::new("mame-0"), &GameKey::new("pacman"))
+        .unwrap());
+
+    let _ = std::fs::remove_file(&path);
+}
