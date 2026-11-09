@@ -229,7 +229,10 @@ void main() {
     // su un monitor moderno, che non si vedono e producono moire'.
     if (effetto == 1 || effetto == 3) {
         float linea = sin(gl_FragCoord.y * 3.14159265);
-        float attenuazione = linea > 0.0 ? 1.0 : 0.72;
+        // 0.86 e non 0.72: con le scanline troppo marcate il testo diventa
+        // faticoso da leggere, che e' il difetto piu' fastidioso di un
+        // frontend con l'effetto CRT acceso.
+        float attenuazione = linea > 0.0 ? 1.0 : 0.86;
         c *= attenuazione;
     }
 
@@ -670,6 +673,13 @@ impl Graphics {
             return Ok(());
         }
 
+        // `impagina` restituisce gli scostamenti **rispetto alla linea di
+        // base**, che sta sotto le lettere. Chi ci passa una posizione intende
+        // l'angolo in alto a sinistra, quindi si scende dell'ascendente:
+        // senza questo, ogni scritta esce piu' in alto di quanto chiesto, e
+        // nella lista il testo finisce sopra alla riga evidenziata.
+        let ascendente = carattere.ascender();
+
         let texture = carattere.texture();
         let rgba = [
             colore.r as f32 / 255.0,
@@ -684,7 +694,7 @@ impl Graphics {
                 continue;
             }
             let x = posizione.0 + avanzamento + glifo.offset[0];
-            let y = posizione.1 + glifo.offset[1];
+            let y = posizione.1 + ascendente + glifo.offset[1];
             let (w, h) = (glifo.size[0], glifo.size[1]);
             let [u0, v0, u1, v1] = glifo.uv;
 

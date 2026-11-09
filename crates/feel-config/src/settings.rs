@@ -67,10 +67,10 @@ impl Default for VideoSettings {
     fn default() -> Self {
         Self {
             fullscreen: true,
-            // Su un cabinato il CRT e' la scelta giusta; su un LCD il valore
-            // predefinito "nessuno" e' piu' sicuro, ma il cabinato e' il caso
-            // per cui questo programma esiste.
-            shader: Shader::Crt,
+            // Nessun effetto all'inizio: le scanline rendono il testo meno
+            // leggibile, e decidere al posto dell'utente che vuole un tubo e'
+            // una supposizione. Si sceglie da F1, "Effetto schermo".
+            shader: Shader::None,
             rotate: Rotate::None,
             vsync: true,
             show_fps: false,
